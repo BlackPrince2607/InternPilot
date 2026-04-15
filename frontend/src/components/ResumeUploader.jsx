@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import axios from 'axios'
+import { useAuth } from '../context/AuthContext'
 
 function ResumeUploader() {
   const [file, setFile] = useState(null)
@@ -8,6 +9,7 @@ function ResumeUploader() {
   const [resumeId, setResumeId] = useState(null)
   const [parsedData, setParsedData] = useState(null)
   const [error, setError] = useState('')
+  const { user } = useAuth()
 
   const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 
@@ -35,9 +37,10 @@ function ResumeUploader() {
       const formData = new FormData()
       formData.append('file', file)
 
-      const uploadRes = await axios.post(`${API_URL}/resumes/upload`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
+      const uploadRes = await axios.post(
+      `${API_URL}/resumes/upload?user_id=${user.id}`,
+      formData
+    )
 
       setResumeId(uploadRes.data.resume_id)
       setUploading(false)

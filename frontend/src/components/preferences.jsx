@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import axios from 'axios'
+import { useAuth } from '../context/AuthContext'
 
 const ROLES = [
   "Backend Intern",
@@ -27,6 +28,7 @@ function Preferences() {
   const [remoteOk, setRemoteOk] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  const { user } = useAuth()
 
   const API_URL = 'http://localhost:8000/api/v1'
 
@@ -46,11 +48,11 @@ function Preferences() {
 
     try {
       await axios.post(`${API_URL}/preferences/save`, {
-        user_id: "d4bcad05-870c-4aeb-92b2-4509b0e3f3fe", // Replace with real auth later
-        preferred_roles: selectedRoles,
-        preferred_locations: selectedLocations,
-        remote_ok: remoteOk
-      })
+      user_id: user.id,
+      preferred_roles,
+      preferred_locations,
+      remote_ok
+    })
 
       setSaved(true)
       setError('')

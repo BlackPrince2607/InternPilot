@@ -21,7 +21,7 @@ supabase = create_client(
 @router.post("/upload")
 async def upload_resume(
     file: UploadFile = File(...),
-    user_id: str = "d4bcad05-870c-4aeb-92b2-4509b0e3f3fe"  # TODO: Get from auth token later
+    user_id: str = ""  # TODO: Get from auth token later
 ):
     """Upload resume PDF to Supabase Storage"""
     
@@ -81,6 +81,7 @@ async def parse_resume(resume_id: str):
         
         # 3. Extract text
         text = extract_text_from_pdf(pdf_bytes)
+        print("Extracted Text Length:", len(text))  # Debugging log
         
         if not text or len(text) < 100:
             raise HTTPException(400, "Could not extract text from PDF")
