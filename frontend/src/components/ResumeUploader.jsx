@@ -1,17 +1,14 @@
 import { useState } from 'react'
-import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
+import api from '../lib/api'
 
 function ResumeUploader() {
   const [file, setFile] = useState(null)
   const [uploading, setUploading] = useState(false)
   const [parsing, setParsing] = useState(false)
-  const [resumeId, setResumeId] = useState(null)
   const [parsedData, setParsedData] = useState(null)
   const [error, setError] = useState('')
-  const { user } = useAuth()
-
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+  const { isAuthenticated, signOut, user } = useAuth()
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0]
@@ -24,38 +21,39 @@ function ResumeUploader() {
   }
 
   const handleUpload = async () => {
+    if (!isAuthenticated) {
+      setError('Please log in before uploading your resume')
+      return
+    }
+
     if (!file) {
       setError('Please select a file first')
       return
     }
 
     setUploading(true)
+    setParsing(false)
     setError('')
 
     try {
-      // Step 1: Upload file
       const formData = new FormData()
       formData.append('file', file)
 
-      const uploadRes = await axios.post(
-      `${API_URL}/resumes/upload?user_id=${user.id}`,
-      formData
-    )
+      const uploadRes = await api.post('/resumes/upload', formData)
 
-      setResumeId(uploadRes.data.resume_id)
       setUploading(false)
-
-      // Step 2: Parse resume
       setParsing(true)
-      const parseRes = await axios.post(
-        `${API_URL}/resumes/parse/${uploadRes.data.resume_id}`
-      )
+
+      const parseRes = await api.post(`/resumes/parse/${uploadRes.data.resume_id}`)
 
       setParsedData(parseRes.data.parsed_data)
       setParsing(false)
-
     } catch (err) {
-      setError(err.response?.data?.detail || 'Upload failed')
+      if (err.response?.status === 401) {
+        setError('Your session expired. Please log in again.')
+      } else {
+        setError(err.response?.data?.detail || 'Upload failed')
+      }
       setUploading(false)
       setParsing(false)
     }
@@ -64,6 +62,9 @@ function ResumeUploader() {
   return (
     <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
       <h2>Upload Your Resume</h2>
+      <p style={{ color: '#555' }}>
+        Logged in as: {user?.email || 'Unknown user'}
+      </p>
 
       <div style={{ marginBottom: '20px' }}>
         <input
@@ -82,10 +83,13 @@ function ResumeUploader() {
             color: 'white',
             border: 'none',
             borderRadius: '5px',
-            cursor: uploading || parsing ? 'not-allowed' : 'pointer'
+            cursor: uploading || parsing ? 'not-allowed' : 'pointer',
           }}
         >
           {uploading ? 'Uploading...' : parsing ? 'Parsing...' : 'Upload & Parse'}
+        </button>
+        <button onClick={() => signOut()} style={{ marginLeft: '10px' }}>
+          Logout
         </button>
       </div>
 
@@ -97,7 +101,7 @@ function ResumeUploader() {
 
       {parsedData && (
         <div style={{ backgroundColor: '#f5f5f5', padding: '20px', borderRadius: '5px' }}>
-          <h3>✅ Resume Parsed Successfully!</h3>
+          <h3>Resume parsed successfully.</h3>
 
           <div style={{ marginTop: '20px' }}>
             <h4>Personal Info:</h4>
@@ -114,6 +118,7 @@ function ResumeUploader() {
                 <p><strong>Languages:</strong> {parsedData.skills.languages?.join(', ')}</p>
                 <p><strong>Frameworks:</strong> {parsedData.skills.frameworks?.join(', ')}</p>
                 <p><strong>Tools:</strong> {parsedData.skills.tools?.join(', ')}</p>
+                <p><strong>Databases:</strong> {parsedData.skills.databases?.join(', ')}</p>
               </>
             )}
           </div>
@@ -121,7 +126,10 @@ function ResumeUploader() {
           <div style={{ marginTop: '20px' }}>
             <h4>Projects:</h4>
             {parsedData.projects?.map((project, idx) => (
-              <div key={idx} style={{ marginBottom: '15px', paddingLeft: '10px', borderLeft: '3px solid #007bff' }}>
+              <div
+                key={idx}
+                style={{ marginBottom: '15px', paddingLeft: '10px', borderLeft: '3px solid #007bff' }}
+              >
                 <p><strong>{project.name}</strong></p>
                 <p>{project.description}</p>
                 <p><em>Tech: {project.technologies?.join(', ')}</em></p>

@@ -1,13 +1,9 @@
 from fastapi import APIRouter, HTTPException
-from supabase import create_client
-import os
+from fastapi import Depends
+from app.api.v1.auth import get_current_user
+from app.dependencies.supabase import get_supabase_client
 
 router = APIRouter(prefix="/matches", tags=["matches"])
-
-supabase = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
 
 # 🔥 Temporary Job Dataset (replace later with scraper)
 JOBS = [
@@ -88,13 +84,16 @@ def calculate_match(user, job):
 
 # 🚀 Main Endpoint
 
-@router.get("/{user_id}")
-async def get_matches(user_id: str):
+@router.get("/")
+async def get_matches(current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
+    supabase = get_supabase_client()
     try:
         # 1️⃣ Get latest resume
         resume_res = supabase.table("resumes") \
             .select("*") \
             .eq("user_id", user_id) \
+            .not_.is_("extracted_data", "null") \
             .limit(1) \
             .execute()
 

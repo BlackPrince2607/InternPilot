@@ -1,7 +1,8 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from supabase import create_client
-import os
 from dotenv import load_dotenv
+from fastapi import Depends
+from app.api.v1.auth import get_current_user
+from app.dependencies.supabase import get_supabase_client
 import uuid
 from app.services.resume_parser import (
     download_pdf, 
@@ -13,17 +14,14 @@ load_dotenv()
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 
-supabase = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
-
 @router.post("/upload")
 async def upload_resume(
     file: UploadFile = File(...),
-    user_id: str = ""  # TODO: Get from auth token later
+    current_user: dict = Depends(get_current_user),
 ):
     """Upload resume PDF to Supabase Storage"""
+    user_id = current_user["id"]
+    supabase = get_supabase_client()
     
     # Validate file type
     if not file.filename.endswith('.pdf'):
@@ -62,14 +60,17 @@ async def upload_resume(
         raise HTTPException(500, f"Upload failed: {str(e)}")
     
 @router.post("/parse/{resume_id}")
-async def parse_resume(resume_id: str):
+async def parse_resume(resume_id: str,
+                       current_user: dict = Depends(get_current_user)):
     """Parse uploaded resume and extract structured data"""
-    
+    user_id = current_user["id"]
+    supabase = get_supabase_client()
     try:
         # 1. Get resume record from database
         resume = supabase.table("resumes").select("*").eq(
-            "id", resume_id
-        ).execute()
+            "id", resume_id) \
+            .eq("user_id", user_id) \
+            .execute()
         
         if not resume.data:
             raise HTTPException(404, "Resume not found")
@@ -90,9 +91,11 @@ async def parse_resume(resume_id: str):
         parsed_data = await parse_resume_with_llm(text)
         
         # 5. Update database with parsed data
-        supabase.table("resumes").update({
+        update_res = supabase.table("resumes").update({
             "extracted_data": parsed_data
-        }).eq("id", resume_id).execute()
+        }).eq("id", resume_id).eq("user_id", user_id).execute()
+        if not update_res.data:
+            raise Exception("Update failed")
         
         return {
             "resume_id": resume_id,
@@ -106,12 +109,15 @@ async def parse_resume(resume_id: str):
         raise HTTPException(500, f"Parsing failed: {str(e)}")
 
 @router.get("/{resume_id}")
-async def get_resume(resume_id: str):
+async def get_resume(resume_id: str,
+                     current_user: dict = Depends(get_current_user)):
     """Get resume data including parsed information"""
+    supabase = get_supabase_client()
     
-    resume = supabase.table("resumes").select("*").eq(
-        "id", resume_id
-    ).execute()
+    resume = supabase.table("resumes").select("*") \
+        .eq("id", resume_id)\
+        .eq("user_id", current_user["id"]) \
+        .execute()
     
     if not resume.data:
         raise HTTPException(404, "Resume not found")

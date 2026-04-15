@@ -3,9 +3,8 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import Login from './components/Login'
 import Signup from './components/Signup'
 import ProtectedRoute from './components/ProtectedRoute'
-import ResumeUploader from './components/ResumeUploader'
-import Preferences from './components/preferences'
-
+import Home from './components/Home'
+import Matches from './components/Matches'
 import './App.css'
 
 function App() {
@@ -15,20 +14,22 @@ function App() {
         <h1>InternPilot AI</h1>
 
         <Routes>
-          {/* Public routes */}
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
 
-          {/* Protected route */}
           <Route
             path="/"
             element={
               <ProtectedRoute>
-                <>
-                  <ResumeUploader />
-                  <hr />
-                  <Preferences />
-                </>
+                <Home />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/matches"
+            element={
+              <ProtectedRoute>
+                <Matches />
               </ProtectedRoute>
             }
           />

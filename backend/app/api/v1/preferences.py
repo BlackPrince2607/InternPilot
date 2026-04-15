@@ -1,27 +1,26 @@
-from fastapi import APIRouter, HTTPException
-from supabase import create_client
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-import os
+from app.api.v1.auth import get_current_user
+from app.dependencies.supabase import get_supabase_client
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
-supabase = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
-
 class PreferencesModel(BaseModel):
-    user_id: str
     preferred_roles: list[str]
     preferred_locations: list[str]
     remote_ok: bool = False
 
 @router.post("/save")
-async def save_preferences(prefs: PreferencesModel):
+async def save_preferences(
+    prefs: PreferencesModel,
+    current_user: dict = Depends(get_current_user),
+):
+    supabase = get_supabase_client()
+    user_id = current_user["id"]
     try:
         # Upsert (insert or update)
         result = supabase.table("preferences").upsert({
-            "user_id": prefs.user_id,
+            "user_id": user_id,
             "preferred_roles": prefs.preferred_roles,
             "preferred_locations": prefs.preferred_locations,
             "remote_ok": prefs.remote_ok
@@ -31,8 +30,10 @@ async def save_preferences(prefs: PreferencesModel):
     except Exception as e:
         raise HTTPException(500, f"Failed: {str(e)}")
 
-@router.get("/{user_id}")
-async def get_preferences(user_id: str):
+@router.get("/me")
+async def get_preferences(current_user: dict = Depends(get_current_user)):
+    supabase = get_supabase_client()
+    user_id = current_user["id"]
     result = supabase.table("preferences").select("*").eq(
         "user_id", user_id
     ).execute()

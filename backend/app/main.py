@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from app.api.v1 import resumes  # Add this import
-from app.api.v1 import resumes, preferences, matches
 
 load_dotenv()
+
+from app.api.v1 import auth, resumes, preferences, matches
 
 app = FastAPI(title="InternPilot API")
 
@@ -18,6 +18,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(resumes.router, prefix="/api/v1")  # Add this line
+app.include_router(auth.router, prefix="/api/v1")
 
 @app.get("/")
 def root():
