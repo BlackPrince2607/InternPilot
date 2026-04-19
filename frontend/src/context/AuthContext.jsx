@@ -40,7 +40,7 @@ export const AuthProvider = ({ children }) => {
   const signIn = async (email, password) => {
     return await supabase.auth.signInWithPassword({ email, password })
   }
-
+  
   // Sign out
   const signOut = async () => {
     const response = await supabase.auth.signOut()

@@ -1,161 +1,332 @@
-from fastapi import APIRouter, HTTPException
-from fastapi import Depends
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+
+from fastapi import APIRouter, Depends
+
 from app.api.v1.auth import get_current_user
 from app.dependencies.supabase import get_supabase_client
+from app.ranking import compute_job_score
 
 router = APIRouter(prefix="/matches", tags=["matches"])
 
-# 🔥 Temporary Job Dataset (replace later with scraper)
-JOBS = [
-    {
-        "title": "Backend Intern",
-        "company": "Razorpay",
-        "location": "Bangalore",
-        "skills_required": ["Python", "FastAPI", "SQL"]
-    },
-    {
-        "title": "ML Intern",
-        "company": "CRED",
-        "location": "Bangalore",
-        "skills_required": ["Python", "TensorFlow", "Pandas"]
-    },
-    {
-        "title": "Frontend Intern",
-        "company": "Swiggy",
-        "location": "Remote",
-        "skills_required": ["React", "JavaScript", "CSS"]
-    }
-]
 
-# 🧠 Helper Functions
+def _as_dict(value: Any) -> dict:
+    if isinstance(value, dict):
+        return value
 
-def flatten_skills(skills_dict):
-    skills_dict = skills_dict or {}
-    return (
-        skills_dict.get("languages", []) +
-        skills_dict.get("frameworks", []) +
-        skills_dict.get("tools", []) +
-        skills_dict.get("databases", [])
-    )
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
 
-def skill_score(user_skills, job_skills):
-    user_skills = [s.lower() for s in user_skills]
-    job_skills = [s.lower() for s in job_skills]
-
-    matched = list(set(user_skills) & set(job_skills))
-    score = len(matched) / len(job_skills) if job_skills else 0
-
-    return score, matched
+    return {}
 
 
-def role_score(preferred_roles, job_title):
-    return 1 if job_title in preferred_roles else 0
+def _normalize_terms(raw: Any) -> list[str]:
+    if not raw:
+        return []
+
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, str):
+        items = [raw]
+    else:
+        items = [str(raw)]
+
+    out: list[str] = []
+    seen: set[str] = set()
+
+    for item in items:
+        for part in str(item).split(","):
+            value = part.strip().lower()
+            if value and value not in seen:
+                seen.add(value)
+                out.append(value)
+
+    return out
 
 
-def location_score(preferred_locations, job_location, remote_ok):
-    if job_location in preferred_locations:
-        return 1
-    if job_location == "Remote" and remote_ok:
-        return 1
-    return 0
+def flatten_skills(skills_obj: Any) -> list[str]:
+    if not skills_obj:
+        return []
+
+    if isinstance(skills_obj, list):
+        return _normalize_terms(skills_obj)
+
+    if isinstance(skills_obj, str):
+        try:
+            parsed = json.loads(skills_obj)
+            if isinstance(parsed, (dict, list)):
+                return flatten_skills(parsed)
+        except Exception:
+            return _normalize_terms(skills_obj)
+        return _normalize_terms(skills_obj)
+
+    if not isinstance(skills_obj, dict):
+        return []
+
+    if isinstance(skills_obj.get("normalized"), list):
+        return _normalize_terms(skills_obj.get("normalized"))
+
+    categories = skills_obj.get("categories", skills_obj)
+    if not isinstance(categories, dict):
+        return []
+
+    merged: list[Any] = []
+    for key in ("languages", "frameworks", "tools", "databases", "skills"):
+        value = categories.get(key, [])
+        if isinstance(value, list):
+            merged.extend(value)
+        elif isinstance(value, str):
+            merged.append(value)
+
+    return _normalize_terms(merged)
 
 
-def calculate_match(user, job):
-    s_score, matched_skills = skill_score(user["skills"], job["skills_required"])
-    r_score = role_score(user["roles"], job["title"])
-    l_score = location_score(user["locations"], job["location"], user["remote_ok"])
+def _extract_job_skills(job: dict, user_skill_vocab: list[str] | None = None) -> list[str]:
+    """
+    Pull skills from:
+    1) jobs.skills_required
+    2) jobs.raw_data fields
+    3) text fallback from title/description using user skill vocab
+    """
+    candidates: list[Any] = []
 
-    final_score = (s_score * 0.6) + (r_score * 0.2) + (l_score * 0.2)
+    # 1) direct column
+    candidates.append(job.get("skills_required"))
 
-    # 🔥 Explanation
-    reasons = []
+    # 2) raw_data JSONB fallback
+    raw_data = _as_dict(job.get("raw_data"))
+    for key in ("skills_required", "skills", "required_skills", "technologies", "tech_stack"):
+        value = raw_data.get(key)
+        if value:
+            candidates.append(value)
+
+    # flatten any structured values found
+    extracted = []
+    for item in candidates:
+        extracted.extend(flatten_skills(item))
+
+    if extracted:
+        return _normalize_terms(extracted)
+
+    # 3) text fallback against user's known skills
+    if user_skill_vocab:
+        blob = " ".join([
+            str(job.get("title") or ""),
+            str(job.get("description") or ""),
+            json.dumps(raw_data, ensure_ascii=False),
+        ]).lower()
+
+        hits = [skill for skill in user_skill_vocab if skill in blob]
+        return _normalize_terms(hits)
+
+    return []
+
+
+def compute_match_score(job: dict, resume_data: dict | None, preferences: dict | None) -> float:
+    preferences = preferences or {}
+
+    if not resume_data:
+        return 0.5
+
+    user_skills = flatten_skills((resume_data or {}).get("skills"))
+    job_skills = _extract_job_skills(job, user_skills)
+
+    if os.getenv("ENV", "development").lower() != "production":
+        print("[match-debug] job skills:", job_skills)
+        print("[match-debug] user skills:", user_skills)
+
+    if not job_skills or not user_skills:
+        base_score = 0.3
+    else:
+        overlap = set(job_skills) & set(user_skills)
+        base_score = len(overlap) / len(job_skills)
+
+    title = (job.get("title") or "").lower()
+    location = (job.get("location") or "").lower()
+
+    role_boost = 0.0
+    for role in _normalize_terms(preferences.get("preferred_roles")):
+        if role in title:
+            role_boost = 0.2
+            break
+
+    location_boost = 0.0
+    for loc in _normalize_terms(preferences.get("preferred_locations")):
+        if loc in location or (loc == "remote" and location == "remote"):
+            location_boost = 0.1
+            break
+
+    match_score = min(base_score + role_boost + location_boost, 1.0)
+
+    if os.getenv("ENV", "development").lower() != "production":
+        print("[match-debug] match_score:", match_score)
+
+    return match_score
+
+
+def _build_why(job: dict, resume_data: dict | None, preferences: dict | None, ranking: dict) -> list[str]:
+    why: list[str] = []
+
+    job_skills = flatten_skills(job.get("skills_required"))
+    user_skills = flatten_skills((resume_data or {}).get("skills"))
+    matched_skills = sorted(set(job_skills) & set(user_skills))
 
     if matched_skills:
-        reasons.append(f"Matched skills: {', '.join(matched_skills)}")
+        why.append(f"Matches your {', '.join(matched_skills[:3])} skills")
 
-    if r_score:
-        reasons.append("Preferred role match")
+    for role in _normalize_terms((preferences or {}).get("preferred_roles")):
+        if role in (job.get("title") or "").lower():
+            why.append(f"Matches preferred role: {role.title()}")
+            break
 
-    if l_score:
-        reasons.append("Location match")
+    for loc in _normalize_terms((preferences or {}).get("preferred_locations")):
+        if loc in (job.get("location") or "").lower():
+            why.append(f"Location matches: {loc.title()}")
+            break
 
-    return round(final_score * 100, 2), reasons
+    if ranking.get("recency_score", 0) >= 0.8:
+        why.append("Recently posted")
+
+    if ranking.get("company_score", 0) >= 0.7:
+        why.append("High company quality")
+
+    if not why:
+        why.append("Relevant based on your profile")
+
+    return why
 
 
-# 🚀 Main Endpoint
+def _update_job_scores_in_batches(supabase, updates: list[dict], batch_size: int = 250) -> None:
+    for i in range(0, len(updates), batch_size):
+        batch = updates[i:i + batch_size]
+        for item in batch:
+            job_id = item.get("id")
+            if not job_id:
+                print(f"Skipping invalid job: {item}")
+                continue
+
+            payload = {
+                "score": item.get("score"),
+                "company_score": item.get("company_score"),
+                "recency_score": item.get("recency_score"),
+            }
+
+            (
+                supabase.table("jobs")
+                .update(payload)
+                .eq("id", job_id)
+                .execute()
+            )
+
 
 @router.get("/")
 async def get_matches(current_user: dict = Depends(get_current_user)):
-    user_id = current_user["id"]
     supabase = get_supabase_client()
-    try:
-        # 1️⃣ Get latest resume
-        resume_res = supabase.table("resumes") \
-            .select("*") \
-            .eq("user_id", user_id) \
-            .not_.is_("extracted_data", "null") \
-            .limit(1) \
-            .execute()
 
-        if not resume_res.data:
-            raise HTTPException(404, "Resume not found")
+    resume_res = (
+        supabase.table("resumes")
+        .select("id, extracted_data, uploaded_at")
+        .eq("user_id", current_user["id"])
+        .order("uploaded_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    resume_row = resume_res.data[0] if resume_res.data else None
+    extracted_data = _as_dict((resume_row or {}).get("extracted_data"))
 
-        resume_data = resume_res.data[0].get("extracted_data")
+    resume_data = {
+        "skills": extracted_data.get("skills", {}),
+        "raw": extracted_data,
+    } if resume_row else None
 
-        if not resume_data:
-            raise HTTPException(400, "Resume not parsed yet")
+    pref_res = (
+        supabase.table("preferences")
+        .select("preferred_roles,preferred_locations,remote_ok")
+        .eq("user_id", current_user["id"])
+        .limit(1)
+        .execute()
+    )
+    preferences = pref_res.data[0] if pref_res.data else {}
 
-        # 2️⃣ Get preferences
-        pref_res = supabase.table("preferences") \
-            .select("*") \
-            .eq("user_id", user_id) \
-            .execute()
+    jobs_res = (
+        supabase.table("jobs")
+        .select("""
+            id,
+            company_id,
+            external_id,
+            title,
+            location,
+            remote_type,
+            description,
+            apply_url,
+            source_name,
+            experience_level,
+            posted_at,
+            score,
+            company_score,
+            recency_score,
+            is_active,
+            skills_required,
+            companies:company_id(id,name,location,careers_url,quality_score)
+        """)
+        .eq("is_active", True)
+        .order("score", desc=True)
+        .limit(50)
+        .execute()
+    )
+    jobs = jobs_res.data or []
 
-        if not pref_res.data:
-            raise HTTPException(404, "Preferences not found")
+    rank_updates: list[dict] = []
+    matches: list[dict] = []
 
-        prefs = pref_res.data[0]
+    for job in jobs:
+        match_score = compute_match_score(job, resume_data, preferences)
+        ranking = compute_job_score(job, match_score, preferences)
 
-        # 3️⃣ Prepare user profile
-        skills_dict = (resume_data or {}).get("skills") or {}
+        current_score = job.get("score")
+        current_company = job.get("company_score")
+        current_recency = job.get("recency_score")
 
-        user_skills = flatten_skills(skills_dict)
-
-        user = {
-            "skills": user_skills,
-            "roles": prefs.get("preferred_roles", []),
-            "locations": prefs.get("preferred_locations", []),
-            "remote_ok": prefs.get("remote_ok", False)
-        }
-
-        # DEBUG (optional)
-        print("USER SKILLS:", user_skills)
-
-        # 4️⃣ Calculate matches
-        results = []
-
-        for job in JOBS:
-            score, reasons = calculate_match(user, job)
-
-            # Optional: filter low scores
-            if score < 20:
-                continue
-
-            results.append({
-                "title": job["title"],
-                "company": job["company"],
-                "location": job["location"],
-                "score": score,
-                "why": reasons
+        if (
+            current_score is None
+            or current_company is None
+            or current_recency is None
+            or abs(float(current_score) - ranking["final_score"]) > 1e-6
+            or abs(float(current_company) - ranking["company_score"]) > 1e-6
+            or abs(float(current_recency) - ranking["recency_score"]) > 1e-6
+        ):
+            rank_updates.append({
+                "id": job.get("id"),
+                "score": ranking["final_score"],
+                "company_score": ranking["company_score"],
+                "recency_score": ranking["recency_score"],
             })
 
-        # 5️⃣ Sort by score
-        results = sorted(results, key=lambda x: x["score"], reverse=True)
+        why = _build_why(job, resume_data, preferences, ranking)
 
-        return {"matches": results}
+        matches.append({
+            "title": job.get("title"),
+            "company": (job.get("companies") or {}).get("name"),
+            "location": job.get("location"),
+            "score": round(ranking["final_score"] * 100, 2),
+            "match_score": round(match_score * 100, 2),
+            "company_score": ranking["company_score"],
+            "recency_score": ranking["recency_score"],
+            "keyword_score": ranking["keyword_score"],
+            "apply_url": job.get("apply_url"),
+            "why": why,
+            "explanation": ", ".join(why),
+        })
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        print("MATCH ERROR:", e)
-        raise HTTPException(500, f"Matching failed: {str(e)}")
+    if rank_updates:
+        _update_job_scores_in_batches(supabase, rank_updates, batch_size=250)
+
+    matches.sort(key=lambda x: x["score"], reverse=True)
+    return {"matches": matches}

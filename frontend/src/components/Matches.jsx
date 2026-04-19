@@ -85,8 +85,12 @@ function Matches() {
             </div>
 
             {/* 🔥 Future Feature Button */}
-            <button style={styles.applyButton}>
-              Generate Email ✉️
+            <button
+              style={styles.applyButton}
+              onClick={() => job.apply_url && window.open(job.apply_url, '_blank', 'noopener,noreferrer')}
+              disabled={!job.apply_url}
+            >
+              Apply Now
             </button>
 
           </div>
