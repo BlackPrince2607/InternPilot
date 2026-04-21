@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional
 
+from app.utils.matching import location_matches, normalize_terms, role_matches_title
+
 
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
@@ -44,61 +46,6 @@ def get_recency_score(posted_at: Any) -> float:
     return 0.3
 
 
-def _normalize_terms(raw: Any) -> list[str]:
-    if not raw:
-        return []
-
-    if isinstance(raw, list):
-        items = raw
-    elif isinstance(raw, str):
-        items = [raw]
-    else:
-        items = [str(raw)]
-
-    out: list[str] = []
-    seen: set[str] = set()
-
-    for item in items:
-        for part in str(item).split(","):
-            value = part.strip().lower()
-            if value and value not in seen:
-                seen.add(value)
-                out.append(value)
-
-    return out
-
-
-def _flatten_job_skills(raw: Any) -> list[str]:
-    if not raw:
-        return []
-
-    if isinstance(raw, list):
-        return _normalize_terms(raw)
-
-    if isinstance(raw, str):
-        return _normalize_terms(raw)
-
-    if not isinstance(raw, dict):
-        return []
-
-    if isinstance(raw.get("normalized"), list):
-        return _normalize_terms(raw.get("normalized"))
-
-    categories = raw.get("categories", raw)
-    if not isinstance(categories, dict):
-        return []
-
-    merged: list[Any] = []
-    for key in ("languages", "frameworks", "tools", "databases", "skills"):
-        value = categories.get(key, [])
-        if isinstance(value, list):
-            merged.extend(value)
-        elif isinstance(value, str):
-            merged.append(value)
-
-    return _normalize_terms(merged)
-
-
 def compute_keyword_score(job: Dict[str, Any], preferences: Dict[str, Any]) -> float:
     title = (job.get("title") or "").lower()
     location = (job.get("location") or "").lower()
@@ -106,11 +53,11 @@ def compute_keyword_score(job: Dict[str, Any], preferences: Dict[str, Any]) -> f
     preferred_roles: Iterable[str] = preferences.get("preferred_roles") or []
     preferred_locations: Iterable[str] = preferences.get("preferred_locations") or []
 
-    role_terms = _normalize_terms(list(preferred_roles))
-    location_terms = _normalize_terms(list(preferred_locations))
+    role_terms = normalize_terms(list(preferred_roles))
+    location_terms = normalize_terms(list(preferred_locations))
 
-    role_hit = 1.0 if role_terms and any(term in title for term in role_terms) else 0.0
-    location_hit = 1.0 if location_terms and any(term in location for term in location_terms) else 0.0
+    role_hit = 1.0 if role_terms and any(role_matches_title(term, title) for term in role_terms) else 0.0
+    location_hit = 1.0 if location_terms and any(location_matches(term, location) for term in location_terms) else 0.0
 
     if not role_terms and not location_terms:
         return 0.5
@@ -139,10 +86,10 @@ def compute_job_score(job: Dict[str, Any], match_score: float, preferences: Dict
     keyword_score = compute_keyword_score(job, preferences or {})
 
     final_score = (
-        0.4 * match_norm
-        + 0.25 * company_score
-        + 0.2 * recency_score
-        + 0.15 * keyword_score
+        0.50 * match_norm
+        + 0.20 * keyword_score
+        + 0.15 * recency_score
+        + 0.15 * company_score
     )
 
     return {

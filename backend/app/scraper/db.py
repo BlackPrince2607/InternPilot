@@ -7,6 +7,7 @@ from supabase import Client
 from app.dependencies.supabase import get_supabase_client
 from app.scraper.parser import JobRecord
 from app.scraper.utils import (
+    infer_company_domain,
     get_company_score,
     get_logger,
     normalize_company_name,
@@ -28,6 +29,9 @@ class JobRepository:
         self.logger = get_logger()
         self._company_cache: dict[str, str] = {}
 
+    def _infer_domain(self, company_name: str) -> str | None:
+        return infer_company_domain(company_name)
+
     def get_existing_job_external_ids(self, external_ids: list[str]) -> set[str]:
         if not external_ids:
             return set()
@@ -43,12 +47,13 @@ class JobRepository:
     def get_or_create_company(self, company_name: str) -> str:
         normalized_name = normalize_company_name(company_name)
         quality_score = get_company_score(normalized_name)
+        inferred_domain = self._infer_domain(normalized_name)
         if normalized_name in self._company_cache:
             return self._company_cache[normalized_name]
 
         existing = (
             self.supabase.table("companies")
-            .select("id,name,quality_score")
+            .select("id,name,quality_score,domain")
             .eq("name", normalized_name)
             .limit(1)
             .execute()
@@ -56,10 +61,15 @@ class JobRepository:
         if existing.data:
             company_id = existing.data[0]["id"]
             existing_score = existing.data[0].get("quality_score") or 0
+            updates: dict[str, object] = {}
             if quality_score > existing_score:
+                updates["quality_score"] = quality_score
+            if not existing.data[0].get("domain") and inferred_domain:
+                updates["domain"] = inferred_domain
+            if updates:
                 (
                     self.supabase.table("companies")
-                    .update({"quality_score": quality_score})
+                    .update(updates)
                     .eq("id", company_id)
                     .execute()
                 )
@@ -68,7 +78,13 @@ class JobRepository:
 
         created = (
             self.supabase.table("companies")
-            .insert({"name": normalized_name, "quality_score": quality_score})
+            .insert(
+                {
+                    "name": normalized_name,
+                    "quality_score": quality_score,
+                    "domain": inferred_domain,
+                }
+            )
             .execute()
         )
         if not created.data:
@@ -95,6 +111,7 @@ class JobRepository:
             "last_seen_at": job.last_seen_at,
             "source_url": job.source_url,
             "raw_data": job.raw_data,
+            "stipend": job.stipend,
         }
         result = self.supabase.table("jobs").upsert(payload, on_conflict="external_id").execute()
         if not result.data:
@@ -137,6 +154,7 @@ class JobRepository:
                             "last_seen_at": job.last_seen_at,
                             "source_url": job.source_url,
                             "raw_data": job.raw_data,
+                            "stipend": job.stipend,
                         }
                     )
                 except Exception as exc:

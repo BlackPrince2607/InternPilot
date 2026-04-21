@@ -1,12 +1,25 @@
+from contextlib import asynccontextmanager
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
+
+from app.api.v1 import admin, auth, cold_email, matches, preferences, resumes, tracker
+from app.scheduler import start_scheduler, stop_scheduler
+from app.services.schema_guard import validate_required_schema
 
 load_dotenv()
 
-from app.api.v1 import auth, resumes, preferences, matches
 
-app = FastAPI(title="InternPilot API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    validate_required_schema()
+    start_scheduler()
+    yield
+    stop_scheduler()
+
+
+app = FastAPI(title="InternPilot API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,10 +32,12 @@ app.add_middleware(
 # Register routers
 app.include_router(resumes.router, prefix="/api/v1")  # Add this line
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(preferences.router, prefix="/api/v1")
+app.include_router(matches.router, prefix="/api/v1")
+app.include_router(cold_email.router, prefix="/api/v1")
+app.include_router(tracker.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
 
 @app.get("/")
 def root():
     return {"message": "InternPilot API is running"}
-
-app.include_router(preferences.router, prefix="/api/v1")
-app.include_router(matches.router, prefix="/api/v1")

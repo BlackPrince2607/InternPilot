@@ -4,11 +4,18 @@ import json
 import os
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 
 from app.api.v1.auth import get_current_user
 from app.dependencies.supabase import get_supabase_client
 from app.ranking import compute_job_score
+from app.utils.matching import (
+    flatten_skills,
+    location_matches,
+    normalize_skill,
+    normalize_terms,
+    role_matches_title,
+)
 
 router = APIRouter(prefix="/matches", tags=["matches"])
 
@@ -27,73 +34,11 @@ def _as_dict(value: Any) -> dict:
     return {}
 
 
-def _normalize_terms(raw: Any) -> list[str]:
-    if not raw:
-        return []
-
-    if isinstance(raw, list):
-        items = raw
-    elif isinstance(raw, str):
-        items = [raw]
-    else:
-        items = [str(raw)]
-
-    out: list[str] = []
-    seen: set[str] = set()
-
-    for item in items:
-        for part in str(item).split(","):
-            value = part.strip().lower()
-            if value and value not in seen:
-                seen.add(value)
-                out.append(value)
-
-    return out
-
-
-def flatten_skills(skills_obj: Any) -> list[str]:
-    if not skills_obj:
-        return []
-
-    if isinstance(skills_obj, list):
-        return _normalize_terms(skills_obj)
-
-    if isinstance(skills_obj, str):
-        try:
-            parsed = json.loads(skills_obj)
-            if isinstance(parsed, (dict, list)):
-                return flatten_skills(parsed)
-        except Exception:
-            return _normalize_terms(skills_obj)
-        return _normalize_terms(skills_obj)
-
-    if not isinstance(skills_obj, dict):
-        return []
-
-    if isinstance(skills_obj.get("normalized"), list):
-        return _normalize_terms(skills_obj.get("normalized"))
-
-    categories = skills_obj.get("categories", skills_obj)
-    if not isinstance(categories, dict):
-        return []
-
-    merged: list[Any] = []
-    for key in ("languages", "frameworks", "tools", "databases", "skills"):
-        value = categories.get(key, [])
-        if isinstance(value, list):
-            merged.extend(value)
-        elif isinstance(value, str):
-            merged.append(value)
-
-    return _normalize_terms(merged)
-
-
-def _extract_job_skills(job: dict, user_skill_vocab: list[str] | None = None) -> list[str]:
+def _extract_job_skills(job: dict) -> list[str]:
     """
     Pull skills from:
     1) jobs.skills_required
     2) jobs.raw_data fields
-    3) text fallback from title/description using user skill vocab
     """
     candidates: list[Any] = []
 
@@ -113,18 +58,7 @@ def _extract_job_skills(job: dict, user_skill_vocab: list[str] | None = None) ->
         extracted.extend(flatten_skills(item))
 
     if extracted:
-        return _normalize_terms(extracted)
-
-    # 3) text fallback against user's known skills
-    if user_skill_vocab:
-        blob = " ".join([
-            str(job.get("title") or ""),
-            str(job.get("description") or ""),
-            json.dumps(raw_data, ensure_ascii=False),
-        ]).lower()
-
-        hits = [skill for skill in user_skill_vocab if skill in blob]
-        return _normalize_terms(hits)
+        return normalize_terms(extracted)
 
     return []
 
@@ -135,8 +69,8 @@ def compute_match_score(job: dict, resume_data: dict | None, preferences: dict |
     if not resume_data:
         return 0.5
 
-    user_skills = flatten_skills((resume_data or {}).get("skills"))
-    job_skills = _extract_job_skills(job, user_skills)
+    user_skills = [normalize_skill(skill) for skill in flatten_skills((resume_data or {}).get("skills"))]
+    job_skills = [normalize_skill(skill) for skill in _extract_job_skills(job)]
 
     if os.getenv("ENV", "development").lower() != "production":
         print("[match-debug] job skills:", job_skills)
@@ -152,14 +86,14 @@ def compute_match_score(job: dict, resume_data: dict | None, preferences: dict |
     location = (job.get("location") or "").lower()
 
     role_boost = 0.0
-    for role in _normalize_terms(preferences.get("preferred_roles")):
-        if role in title:
+    for role in normalize_terms(preferences.get("preferred_roles")):
+        if role_matches_title(role, title):
             role_boost = 0.2
             break
 
     location_boost = 0.0
-    for loc in _normalize_terms(preferences.get("preferred_locations")):
-        if loc in location or (loc == "remote" and location == "remote"):
+    for loc in normalize_terms(preferences.get("preferred_locations")):
+        if location_matches(loc, location):
             location_boost = 0.1
             break
 
@@ -181,13 +115,13 @@ def _build_why(job: dict, resume_data: dict | None, preferences: dict | None, ra
     if matched_skills:
         why.append(f"Matches your {', '.join(matched_skills[:3])} skills")
 
-    for role in _normalize_terms((preferences or {}).get("preferred_roles")):
-        if role in (job.get("title") or "").lower():
+    for role in normalize_terms((preferences or {}).get("preferred_roles")):
+        if role_matches_title(role, (job.get("title") or "").lower()):
             why.append(f"Matches preferred role: {role.title()}")
             break
 
-    for loc in _normalize_terms((preferences or {}).get("preferred_locations")):
-        if loc in (job.get("location") or "").lower():
+    for loc in normalize_terms((preferences or {}).get("preferred_locations")):
+        if location_matches(loc, (job.get("location") or "").lower()):
             why.append(f"Location matches: {loc.title()}")
             break
 
@@ -227,7 +161,10 @@ def _update_job_scores_in_batches(supabase, updates: list[dict], batch_size: int
 
 
 @router.get("/")
-async def get_matches(current_user: dict = Depends(get_current_user)):
+async def get_matches(
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
     supabase = get_supabase_client()
 
     resume_res = (
@@ -274,7 +211,8 @@ async def get_matches(current_user: dict = Depends(get_current_user)):
             recency_score,
             is_active,
             skills_required,
-            companies:company_id(id,name,location,careers_url,quality_score)
+            raw_data,
+            companies:company_id(id,name,careers_url,quality_score)
         """)
         .eq("is_active", True)
         .order("score", desc=True)
@@ -326,7 +264,7 @@ async def get_matches(current_user: dict = Depends(get_current_user)):
         })
 
     if rank_updates:
-        _update_job_scores_in_batches(supabase, rank_updates, batch_size=250)
+        background_tasks.add_task(_update_job_scores_in_batches, supabase, rank_updates, 250)
 
     matches.sort(key=lambda x: x["score"], reverse=True)
     return {"matches": matches}

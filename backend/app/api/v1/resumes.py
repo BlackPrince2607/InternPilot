@@ -1,16 +1,14 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
-from dotenv import load_dotenv
-from fastapi import Depends
+import uuid
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+
 from app.api.v1.auth import get_current_user
 from app.dependencies.supabase import get_supabase_client
-import uuid
 from app.services.resume_parser import (
-    download_pdf, 
-    extract_text_from_pdf, 
-    parse_resume_with_llm
+    download_pdf,
+    extract_text_from_pdf,
+    parse_resume_with_llm,
 )
-
-load_dotenv()
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 

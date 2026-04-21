@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Iterable
 
+import httpx
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -213,6 +214,24 @@ def normalize_company_name(name: str) -> str:
     return " ".join(word.upper() if len(word) <= 3 else word.capitalize() for word in lowered.split())
 
 
+def infer_company_domain(company_name: str) -> str | None:
+    normalized = normalize_whitespace(company_name).lower()
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        return None
+
+    parts = [part for part in normalized.split(" ") if part]
+    if not parts:
+        return None
+
+    candidate = "".join(parts)
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", candidate):
+        return None
+
+    return f"{candidate}.com"
+
+
 def normalize_for_hash(value: str | None) -> str:
     normalized = normalize_whitespace(value).lower()
     return re.sub(r"\s+", " ", normalized)
@@ -290,3 +309,13 @@ def get_required_env_vars() -> list[str]:
 
 def get_missing_env_vars() -> list[str]:
     return [name for name in get_required_env_vars() if not os.getenv(name)]
+
+
+def build_httpx_async_client(timeout_seconds: float = 20.0) -> httpx.AsyncClient:
+    transport = httpx.AsyncHTTPTransport(retries=3)
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout_seconds),
+        transport=transport,
+        follow_redirects=True,
+        headers=DEFAULT_HEADERS,
+    )
