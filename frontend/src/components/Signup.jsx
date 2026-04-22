@@ -29,7 +29,7 @@ function Signup() {
     }
 
     if (data.session) {
-      navigate('/')
+      navigate('/app')
     } else {
       navigate('/login', {
         state: {

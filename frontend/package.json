@@ -11,10 +11,15 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
+    "@tailwindcss/vite": "^4.2.2",
     "axios": "^1.15.0",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^0.542.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-router-dom": "^7.14.1"
+    "react-router-dom": "^7.14.1",
+    "tailwindcss": "^4.2.2",
+    "uipro-cli": "^2.2.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

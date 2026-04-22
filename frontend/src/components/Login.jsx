@@ -26,7 +26,7 @@ function Login() {
     if (error) {
       setErrorMessage(error.message)
     } else {
-      navigate('/')
+      navigate('/app')
     }
 
     setLoading(false)
