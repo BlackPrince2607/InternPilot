@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.scraper.career_crawler import CareerCrawler
-from app.scraper.db import JobRepository
-from app.scraper.sources.adzuna import AdzunaFetcher
-from app.scraper.sources.greenhouse import GreenhouseFetcher
-from app.scraper.sources.lever import LeverFetcher
-from app.scraper.sources.remotive import RemotiveFetcher
 from app.scraper.utils import get_logger
+from app.services.scheduler import run_job_ingestion_cycle
 
 logger = get_logger()
 _scheduler: AsyncIOScheduler | None = None
@@ -46,36 +43,10 @@ async def run_all_scrapers(force_run: bool = False) -> None:
     _scheduler_status["last_status"] = "running"
     _scheduler_status["last_error"] = None
     try:
-        fetchers = []
-        for fetcher_cls in (AdzunaFetcher, RemotiveFetcher, GreenhouseFetcher, LeverFetcher):
-            try:
-                fetchers.append(fetcher_cls())
-            except Exception as exc:
-                logger.warning("Skipping fetcher %s: %s", fetcher_cls.__name__, exc)
-
-        if not fetchers:
-            logger.warning("No scrapers available to run")
-            return
-
-        results = await asyncio.gather(*(fetcher.fetch() for fetcher in fetchers), return_exceptions=True)
-
-        all_jobs = []
-        for result in results:
-            if isinstance(result, Exception):
-                logger.error("Scraper run failed: %s", result)
-                continue
-            all_jobs.extend(result)
-
-        repository = JobRepository()
-        summary = repository.bulk_insert_jobs(all_jobs)
-        deactivated = repository.deactivate_old_jobs(stale_after_days=3)
+        summary = await run_job_ingestion_cycle()
         logger.info(
-            "Scheduler fetched=%s inserted=%s updated=%s skipped=%s deactivated=%s force_run=%s",
-            summary.fetched,
-            summary.inserted,
-            summary.updated,
-            summary.skipped,
-            deactivated,
+            "Scheduler ingestion summary=%s force_run=%s",
+            summary,
             force_run,
         )
         await CareerCrawler().crawl_pending_companies(limit=10)
@@ -94,11 +65,13 @@ def start_scheduler() -> None:
         return
 
     _scheduler = AsyncIOScheduler()
-    first_run_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+    interval_hours = max(1, int(os.getenv("SCRAPER_INTERVAL_HOURS", "6")))
+    initial_delay_minutes = max(0, int(os.getenv("SCRAPER_INITIAL_DELAY_MINUTES", "10")))
+    first_run_at = datetime.now(timezone.utc) + timedelta(minutes=initial_delay_minutes)
     _scheduler.add_job(
         run_all_scrapers,
         "interval",
-        hours=6,
+        hours=interval_hours,
         id="run_all_scrapers",
         replace_existing=True,
         next_run_time=first_run_at,

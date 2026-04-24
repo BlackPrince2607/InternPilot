@@ -112,6 +112,8 @@ class JobRepository:
             "source_url": job.source_url,
             "raw_data": job.raw_data,
             "stipend": job.stipend,
+            "job_domain": job.job_domain,
+            "job_embedding": job.job_embedding,
         }
         result = self.supabase.table("jobs").upsert(payload, on_conflict="external_id").execute()
         if not result.data:
@@ -155,6 +157,8 @@ class JobRepository:
                             "source_url": job.source_url,
                             "raw_data": job.raw_data,
                             "stipend": job.stipend,
+                            "job_domain": job.job_domain,
+                            "job_embedding": job.job_embedding,
                         }
                     )
                 except Exception as exc:

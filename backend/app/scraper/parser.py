@@ -43,6 +43,8 @@ class JobRecord(BaseModel):
     stipend: str | None = None
     source_url: str | None = None
     raw_data: dict[str, Any] = Field(default_factory=dict)
+    job_domain: str | None = None
+    job_embedding: list[float] | None = None
 
 
 def safe_select(element: Tag, selectors: list[str]) -> str | None:

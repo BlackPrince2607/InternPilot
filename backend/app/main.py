@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
+import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -8,7 +10,14 @@ from app.api.v1 import admin, auth, cold_email, matches, preferences, resumes, t
 from app.scheduler import start_scheduler, stop_scheduler
 from app.services.schema_guard import validate_required_schema
 
-load_dotenv()
+ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(ENV_PATH)
+
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("APP_CORS_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
 
 
 @asynccontextmanager
@@ -23,7 +32,7 @@ app = FastAPI(title="InternPilot API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

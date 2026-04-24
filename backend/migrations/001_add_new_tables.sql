@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     recency_score FLOAT,
     source_url TEXT,
     raw_data JSONB,
+    job_domain TEXT,
+    job_embedding JSONB,
     stipend TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -56,12 +58,23 @@ CREATE TABLE IF NOT EXISTS user_activity (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- User interaction tracking for adaptive ranking
+CREATE TABLE IF NOT EXISTS user_interactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    action TEXT NOT NULL CHECK (action IN ('view', 'apply', 'skip')),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Index for fast job lookups
 CREATE INDEX IF NOT EXISTS idx_jobs_is_active ON jobs(is_active);
 CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_source ON jobs(source_name);
 CREATE INDEX IF NOT EXISTS idx_cold_emails_user ON cold_emails(user_id);
 CREATE INDEX IF NOT EXISTS idx_cold_emails_sent_at ON cold_emails(sent_at);
+CREATE INDEX IF NOT EXISTS idx_user_interactions_user ON user_interactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_interactions_job ON user_interactions(job_id);
 
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS domain TEXT;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id);
@@ -82,6 +95,8 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS company_score FLOAT;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS recency_score FLOAT;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_url TEXT;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS raw_data JSONB;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS job_domain TEXT;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS job_embedding JSONB;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS stipend TEXT;
 
 ALTER TABLE cold_emails ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
@@ -96,6 +111,11 @@ ALTER TABLE cold_emails ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT 
 ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS jobs_applied_count INTEGER DEFAULT 0;
 ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS emails_sent_count INTEGER DEFAULT 0;
 ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE user_interactions ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE user_interactions ADD COLUMN IF NOT EXISTS job_id UUID REFERENCES jobs(id) ON DELETE CASCADE;
+ALTER TABLE user_interactions ADD COLUMN IF NOT EXISTS action TEXT;
+ALTER TABLE user_interactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_external_id_unique ON jobs(external_id);
 
