@@ -2,18 +2,19 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import SignInFlow from './ui/sign-in-flow'
+import { CenterLoader } from './ui/feedback'
 
 export default function Login() {
   const navigate = useNavigate()
-  const { signIn, isAuthenticated } = useAuth()
+  const { signIn, isAuthenticated, loading } = useAuth()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (!loading && isAuthenticated) {
       navigate('/app', { replace: true })
     }
-  }, [isAuthenticated, navigate])
+  }, [isAuthenticated, loading, navigate])
 
   const handleSubmit = async (email, password) => {
     if (!email || !password) {
@@ -37,6 +38,10 @@ export default function Login() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (loading) {
+    return <CenterLoader title="Checking session" subtitle="Preparing your secure sign-in flow..." />
   }
 
   return <SignInFlow mode="login" onSubmit={handleSubmit} loading={submitting} error={error} />
