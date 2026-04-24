@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.api.v1.auth import get_current_user
+from app.core.api_response import success_response
 from app.dependencies.supabase import get_supabase_client
 from app.scraper.db import JobRepository
 from app.scraper.utils import get_logger, normalize_company_name
@@ -60,7 +61,7 @@ async def generate_email(
         supabase.table("resumes")
         .select("extracted_data")
         .eq("user_id", current_user["id"])
-        .order("uploaded_at", desc=True)
+        .order("id", desc=True)
         .limit(1)
         .execute()
     )
@@ -139,12 +140,14 @@ async def generate_email(
 
     email_id = insert_res.data[0]["id"]
     mailto_url, safe_body = _build_safe_mailto_url(payload.recipient_email, email["subject"], email["body"])
-    return {
-        "email_id": email_id,
-        "subject": email["subject"],
-        "body": safe_body,
-        "mailto_url": mailto_url,
-    }
+    return success_response(
+        {
+            "email_id": email_id,
+            "subject": email["subject"],
+            "body": safe_body,
+            "mailto_url": mailto_url,
+        }
+    )
 
 
 @router.post("/record-sent")
@@ -173,7 +176,7 @@ async def record_sent(
     )
 
     increment_emails_sent_count(current_user["id"])
-    return {"success": True}
+    return success_response({"recorded": True})
 
 
 @router.get("/history")
@@ -199,4 +202,4 @@ async def get_history(current_user: dict = Depends(get_current_user)):
                 "created_at": item.get("created_at"),
             }
         )
-    return {"emails": history}
+    return success_response({"emails": history})

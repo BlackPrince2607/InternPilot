@@ -7,6 +7,7 @@ import Login from './components/Login'
 import Signup from './components/Signup'
 import Onboarding from './pages/Onboarding'
 import Preferences from './pages/Preferences'
+import Images from './pages/Images'
 
 function App() {
   return (
@@ -37,6 +38,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Matches />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/images"
+          element={
+            <ProtectedRoute>
+              <Images />
             </ProtectedRoute>
           }
         />

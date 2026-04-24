@@ -214,7 +214,7 @@ pnpm install
 
 # Configure environment variables
 cp .env.example .env.local
-# → Fill in: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, NEXT_PUBLIC_API_URL
+# → Fill in: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_API_BASE_URL
 ```
 
 ### 4. Run locally
@@ -248,9 +248,9 @@ Open `http://localhost:3000` — you should see the InternPilot landing page.
 
 | Variable | Description |
 |----------|-------------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public key |
-| `NEXT_PUBLIC_API_URL` | Your Railway backend URL |
+| `VITE_SUPABASE_URL` | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | Supabase anon/public key |
+| `VITE_API_BASE_URL` | Your backend API URL ending with `/api/v1` |
 
 ---
 

@@ -2,19 +2,20 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import SignInFlow from './ui/sign-in-flow'
+import { CenterLoader } from './ui/feedback'
 
 export default function Signup() {
   const navigate = useNavigate()
-  const { signUp, isAuthenticated } = useAuth()
+  const { signUp, isAuthenticated, loading } = useAuth()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (!loading && isAuthenticated) {
       navigate('/app', { replace: true })
     }
-  }, [isAuthenticated, navigate])
+  }, [isAuthenticated, loading, navigate])
 
   const handleSubmit = async (email, password) => {
     if (!email || !password) {
@@ -44,6 +45,10 @@ export default function Signup() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (loading) {
+    return <CenterLoader title="Checking session" subtitle="Preparing your secure sign-up flow..." />
   }
 
   return (

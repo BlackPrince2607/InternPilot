@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import api from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 import { motion } from 'framer-motion'
+import { InlineAlert } from './ui/feedback'
 
 const ROLES = [
   'Backend Intern',
@@ -181,16 +182,8 @@ function Preferences() {
         Open to remote work
       </label>
 
-      {error && (
-        <div className="mb-4 rounded-2xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-          {error}
-        </div>
-      )}
-      {saved && !error && (
-        <div className="mb-4 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-          Preferences saved.
-        </div>
-      )}
+      {error ? <InlineAlert tone="error" message={error} className="mb-4" /> : null}
+      {saved && !error ? <InlineAlert tone="success" message="Preferences saved." className="mb-4" /> : null}
 
       <motion.button
         whileHover={saving ? undefined : { scale: 1.03 }}

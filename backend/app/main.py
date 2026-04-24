@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import admin, auth, cold_email, jobs, matches, preferences, resumes, tracker
+from app.api.v1 import admin, auth, cold_email, images, jobs, matches, preferences, resumes, tracker
 from app.core.api_response import error_response, success_response
 from app.scheduler import start_scheduler, stop_scheduler
 from app.services.schema_guard import validate_required_schema
@@ -52,7 +52,7 @@ async def handle_unexpected_exception(_: Request, __: Exception):
     return JSONResponse(status_code=500, content=error_response("Internal server error"))
 
 # Register routers
-app.include_router(resumes.router, prefix="/api/v1")  # Add this line
+app.include_router(resumes.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(preferences.router, prefix="/api/v1")
 app.include_router(jobs.router, prefix="/api/v1")
@@ -60,6 +60,7 @@ app.include_router(matches.router, prefix="/api/v1")
 app.include_router(cold_email.router, prefix="/api/v1")
 app.include_router(tracker.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
+app.include_router(images.router, prefix="/api/v1")
 
 @app.get("/")
 def root():
