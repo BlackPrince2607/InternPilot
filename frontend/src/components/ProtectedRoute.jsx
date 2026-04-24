@@ -1,20 +1,12 @@
-import { useAuth } from '../context/AuthContext'
 import { Navigate } from 'react-router-dom'
 
 function ProtectedRoute({ children }) {
-  const { user, loading } = useAuth()
+  const isAuth = localStorage.getItem("auth") === "true"
 
-  // ⏳ While checking session
-  if (loading) {
-    return <div>Loading...</div>
-  }
-
-  // ❌ Not logged in → redirect
-  if (!user) {
+  if (!isAuth) {
     return <Navigate to="/login" replace />
   }
 
-  // ✅ Logged in → allow access
   return children
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import api from '../lib/api'
 import { useAuth } from '../context/AuthContext'
+import { motion } from 'framer-motion'
 
 const ROLES = [
   'Backend Intern',
@@ -95,83 +96,100 @@ function Preferences() {
   }
 
   return (
-    <div style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
-      <h2>Your Preferences</h2>
+    <motion.aside
+      initial={{ opacity: 0, x: 18 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.45, delay: 0.1, ease: 'easeOut' }}
+      className="h-fit rounded-[24px] border border-white/10 bg-white/5 p-5 shadow-lg shadow-black/20 backdrop-blur sm:p-6"
+    >
+      <div className="mb-6">
+        <div className="mb-2 inline-flex items-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.24em] text-slate-300">
+          Preferences
+        </div>
+        <h2 className="text-xl font-semibold text-white">Tune your target internships</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-400">
+          Save the roles and locations you actually want so your matches stay focused.
+        </p>
+      </div>
 
-      <div style={{ marginBottom: '30px' }}>
-        <h3>Preferred Roles</h3>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+      <div className="mb-7">
+        <h3 className="mb-3 text-sm font-medium text-slate-200">Preferred Roles</h3>
+        <div className="flex flex-wrap gap-2">
           {ROLES.map((role) => (
-            <button
+            <motion.button
               key={role}
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.98 }}
               onClick={() => toggleItem(role, selectedRoles, setSelectedRoles)}
-              style={{
-                padding: '8px 16px',
-                borderRadius: '20px',
-                border: '2px solid #007bff',
-                backgroundColor: selectedRoles.includes(role) ? '#007bff' : 'white',
-                color: selectedRoles.includes(role) ? 'white' : '#007bff',
-                cursor: 'pointer',
-              }}
+              className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                selectedRoles.includes(role)
+                  ? 'border-blue-400/40 bg-blue-500 text-white shadow-lg shadow-blue-950/35'
+                  : 'border-white/10 bg-slate-900/70 text-slate-300 hover:border-blue-300/30 hover:text-white'
+              }`}
             >
               {role}
-            </button>
+            </motion.button>
           ))}
         </div>
       </div>
 
-      <div style={{ marginBottom: '30px' }}>
-        <h3>Preferred Locations</h3>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+      <div className="mb-7">
+        <h3 className="mb-3 text-sm font-medium text-slate-200">Preferred Locations</h3>
+        <div className="flex flex-wrap gap-2">
           {LOCATIONS.map((loc) => (
-            <button
+            <motion.button
               key={loc}
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.98 }}
               onClick={() => toggleItem(loc, selectedLocations, setSelectedLocations)}
-              style={{
-                padding: '8px 16px',
-                borderRadius: '20px',
-                border: '2px solid #28a745',
-                backgroundColor: selectedLocations.includes(loc) ? '#28a745' : 'white',
-                color: selectedLocations.includes(loc) ? 'white' : '#28a745',
-                cursor: 'pointer',
-              }}
+              className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                selectedLocations.includes(loc)
+                  ? 'border-emerald-400/40 bg-emerald-500 text-white shadow-lg shadow-emerald-950/35'
+                  : 'border-white/10 bg-slate-900/70 text-slate-300 hover:border-emerald-300/30 hover:text-white'
+              }`}
             >
               {loc}
-            </button>
+            </motion.button>
           ))}
         </div>
       </div>
 
-      <div style={{ marginBottom: '30px' }}>
-        <label>
+      <label className="mb-6 flex cursor-pointer items-center gap-3 rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-slate-200">
+        <span className="relative flex h-5 w-5 items-center justify-center">
           <input
             type="checkbox"
             checked={remoteOk}
             onChange={(e) => setRemoteOk(e.target.checked)}
-            style={{ marginRight: '10px' }}
+            className="peer sr-only"
           />
-          Open to Remote Work
-        </label>
-      </div>
+          <span className="h-5 w-5 rounded border border-white/20 bg-slate-950 peer-checked:border-emerald-400 peer-checked:bg-emerald-500" />
+          <span className="pointer-events-none absolute text-xs font-bold text-white opacity-0 peer-checked:opacity-100">
+            ✓
+          </span>
+        </span>
+        Open to remote work
+      </label>
 
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      {saved && <p style={{ color: 'green' }}>Preferences saved.</p>}
+      {error && (
+        <div className="mb-4 rounded-2xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          {error}
+        </div>
+      )}
+      {saved && !error && (
+        <div className="mb-4 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+          Preferences saved.
+        </div>
+      )}
 
-      <button
+      <motion.button
+        whileHover={{ scale: 1.03 }}
+        whileTap={{ scale: 0.98 }}
         onClick={handleSave}
-        style={{
-          padding: '12px 30px',
-          backgroundColor: '#007bff',
-          color: 'white',
-          border: 'none',
-          borderRadius: '5px',
-          cursor: 'pointer',
-          fontSize: '16px',
-        }}
+        className="inline-flex w-full items-center justify-center rounded-2xl bg-blue-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/35 transition hover:bg-blue-400"
       >
         Save Preferences
-      </button>
-    </div>
+      </motion.button>
+    </motion.aside>
   )
 }
 
