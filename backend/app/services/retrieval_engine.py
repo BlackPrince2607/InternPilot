@@ -23,7 +23,10 @@ class RetrievalEngine:
 
         # Fast lexical shortlist first to keep response time predictable.
         lexical_ranked = self._lexical_rank(resume_text, jobs)
-        shortlist = lexical_ranked[: min(len(lexical_ranked), max(self.top_k * 3, 120))]
+        # Keep semantic pass bounded so /matches stays responsive.
+        semantic_shortlist_cap = 180
+        shortlist_size = min(len(lexical_ranked), min(max(self.top_k * 2, 90), semantic_shortlist_cap))
+        shortlist = lexical_ranked[:shortlist_size]
         shortlist_jobs = [item.job for item in shortlist]
 
         # Try semantic reranking on shortlist; gracefully fall back if model work fails/blocks.

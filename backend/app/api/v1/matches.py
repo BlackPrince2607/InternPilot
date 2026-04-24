@@ -239,12 +239,12 @@ async def get_matches(
         user_profile.preferred_roles,
         user_profile.preferred_locations,
         user_profile.remote_ok,
-        hard_limit=450,
+        hard_limit=320,
     )
 
     behavior_profile = load_behavior_profile(supabase, current_user["id"])
     engine = MatchEngine(user_profile, behavior_profile=behavior_profile)
-    retrieval_top_k = min(160, max(60, len(candidate_jobs)))
+    retrieval_top_k = min(110, max(50, len(candidate_jobs)))
     retrieval_engine = RetrievalEngine(top_k=retrieval_top_k)
     candidates = retrieval_engine.retrieve(user_profile.resume_text, candidate_jobs)
 

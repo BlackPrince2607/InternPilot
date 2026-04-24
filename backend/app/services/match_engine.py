@@ -194,6 +194,7 @@ class MatchEngine:
             self.user.base_skills | self.user.project_skills | self.user.experience_skills
         )
         self.expanded_user_skills = expand_with_related(self.user_skill_space)
+        self._skill_strength_cache: dict[str, float] = {}
 
     def evaluate_job(self, job: dict[str, Any], semantic_similarity_score: float) -> MatchResult:
         job_profile = extract_job_skill_profile(job)
@@ -334,14 +335,20 @@ class MatchEngine:
         if not skill:
             return 0.0
 
+        cached = self._skill_strength_cache.get(skill)
+        if cached is not None:
+            return cached
+
         related = get_related_skills(skill)
         if related & self.expanded_user_skills:
+            self._skill_strength_cache[skill] = 1.0
             return 1.0
 
         best = 0.0
         for user_skill in self.user_skill_space:
             if self._skills_partially_match(skill, user_skill):
                 best = max(best, 0.65)
+        self._skill_strength_cache[skill] = best
         return best
 
     @staticmethod
