@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from app.api.v1.auth import get_current_user
+from app.core.api_response import success_response
 from app.dependencies.supabase import get_supabase_client
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
@@ -26,7 +27,7 @@ async def save_preferences(
             "remote_ok": prefs.remote_ok
         },on_conflict="user_id").execute()
 
-        return {"message": "Preferences saved", "data": result.data}
+        return success_response({"preferences": result.data[0] if result.data else None})
     except Exception as e:
         raise HTTPException(500, f"Failed: {str(e)}")
 
@@ -39,6 +40,6 @@ async def get_preferences(current_user: dict = Depends(get_current_user)):
     ).execute()
 
     if not result.data:
-        return {"preferences": None}
+        return success_response({"preferences": None})
 
-    return {"preferences": result.data[0]}
+    return success_response({"preferences": result.data[0]})

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.core.api_response import success_response
 from app.dependencies.supabase import get_supabase_client
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -18,6 +19,7 @@ def ensure_app_user(current_user: dict) -> None:
         supabase.table("users").upsert(
             {
                 "id": user_id,
+                "email": current_user.get("email"),
             },
             on_conflict="id",
         ).execute()
@@ -67,7 +69,7 @@ async def get_current_user(
 
 @router.get("/me")
 async def get_me(current_user: dict = Depends(get_current_user)):
-    return {
+    return success_response({
         "user": {
             "id": current_user["id"],
             "email": current_user.get("email"),
@@ -75,4 +77,4 @@ async def get_me(current_user: dict = Depends(get_current_user)):
             "role": current_user.get("role"),
             "user_metadata": current_user.get("user_metadata", {}),
         }
-    }
+    })

@@ -3,6 +3,9 @@ from __future__ import annotations
 from app.dependencies.supabase import get_supabase_client
 
 REQUIRED_TABLE_SELECTS = {
+    "users": "id,email,created_at",
+    "resumes": "id,user_id,file_url,extracted_data,uploaded_at",
+    "preferences": "user_id,preferred_roles,preferred_locations,remote_ok,updated_at",
     "companies": "id,name,domain,quality_score",
     "jobs": "id,company_id,external_id,title,score,company_score,recency_score,job_domain,job_embedding",
     "cold_emails": "id,user_id,company_id,recipient_email,subject,body,sent_at",

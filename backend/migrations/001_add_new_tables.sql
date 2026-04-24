@@ -10,6 +10,34 @@ CREATE TABLE IF NOT EXISTS companies (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- App users synced from Supabase auth
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY,
+    email TEXT UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Uploaded resumes and parsed payloads
+CREATE TABLE IF NOT EXISTS resumes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    file_url TEXT NOT NULL,
+    extracted_data JSONB,
+    uploaded_at TIMESTAMPTZ DEFAULT NOW(),
+    parsed_at TIMESTAMPTZ
+);
+
+-- Saved preferences used by the match engine
+CREATE TABLE IF NOT EXISTS preferences (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    preferred_roles TEXT[] DEFAULT '{}',
+    preferred_locations TEXT[] DEFAULT '{}',
+    remote_ok BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Jobs table (may already exist)
 CREATE TABLE IF NOT EXISTS jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -108,6 +136,23 @@ ALTER TABLE cold_emails ADD COLUMN IF NOT EXISTS body TEXT;
 ALTER TABLE cold_emails ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
 ALTER TABLE cold_emails ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE resumes ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE resumes ADD COLUMN IF NOT EXISTS file_url TEXT;
+ALTER TABLE resumes ADD COLUMN IF NOT EXISTS extracted_data JSONB;
+ALTER TABLE resumes ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE resumes ADD COLUMN IF NOT EXISTS parsed_at TIMESTAMPTZ;
+
+ALTER TABLE preferences ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE preferences ADD COLUMN IF NOT EXISTS preferred_roles TEXT[] DEFAULT '{}';
+ALTER TABLE preferences ADD COLUMN IF NOT EXISTS preferred_locations TEXT[] DEFAULT '{}';
+ALTER TABLE preferences ADD COLUMN IF NOT EXISTS remote_ok BOOLEAN DEFAULT FALSE;
+ALTER TABLE preferences ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE preferences ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
 ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS jobs_applied_count INTEGER DEFAULT 0;
 ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS emails_sent_count INTEGER DEFAULT 0;
 ALTER TABLE user_activity ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
@@ -118,6 +163,8 @@ ALTER TABLE user_interactions ADD COLUMN IF NOT EXISTS action TEXT;
 ALTER TABLE user_interactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_external_id_unique ON jobs(external_id);
+CREATE INDEX IF NOT EXISTS idx_resumes_user ON resumes(user_id);
+CREATE INDEX IF NOT EXISTS idx_preferences_updated_at ON preferences(updated_at);
 
 CREATE OR REPLACE FUNCTION increment_jobs_applied(target_user_id UUID)
 RETURNS TABLE (jobs_applied_count INTEGER, emails_sent_count INTEGER)

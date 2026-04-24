@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends
 
 from app.api.v1.auth import get_current_user
+from app.core.api_response import success_response
 from app.dependencies.supabase import get_supabase_client
 from app.services.behavior_ranker import load_behavior_profile
 from app.services.match_engine import MatchEngine, build_user_profile
@@ -97,7 +98,7 @@ async def get_matches(
     jobs = jobs_res.data or []
 
     if not extracted_data:
-        return {"matches": []}
+        return success_response({"matches": []})
 
     user_profile = build_user_profile(extracted_data, preferences)
     behavior_profile = load_behavior_profile(supabase, current_user["id"])
@@ -128,6 +129,7 @@ async def get_matches(
                 "source_name": job.get("source_name"),
                 "experience_level": job.get("experience_level"),
                 "final_score": round(result.final_score * 100, 2),
+                "score": round(result.final_score * 100, 2),
                 "skill_match_score": round(result.skill_match_score * 100, 2),
                 "project_relevance_score": round(result.project_relevance_score * 100, 2),
                 "experience_depth_score": round(result.experience_depth_score * 100, 2),
@@ -140,7 +142,6 @@ async def get_matches(
                 "matched_skills": result.matched_skills,
                 "missing_skills": result.missing_skills,
                 "skill_gaps": result.skill_gaps,
-                "why": result.reasons,
                 "reasons": result.reasons,
                 "penalties": result.penalties,
                 "domain": result.domain,
@@ -151,4 +152,4 @@ async def get_matches(
         background_tasks.add_task(_update_job_scores_in_batches, supabase, rank_updates, 250)
 
     matches.sort(key=lambda item: item["final_score"], reverse=True)
-    return {"matches": matches[:50]}
+    return success_response({"matches": matches[:50]})

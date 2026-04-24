@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from app.api.v1.auth import get_current_user
+from app.core.api_response import success_response
 from app.dependencies.supabase import get_supabase_client
 from app.services.resume_parser import (
     download_pdf,
@@ -22,7 +23,7 @@ async def upload_resume(
     supabase = get_supabase_client()
     
     # Validate file type
-    if not file.filename.endswith('.pdf'):
+    if not file.filename or not file.filename.lower().endswith('.pdf'):
         raise HTTPException(400, "Only PDF files allowed")
     
     # Read file content
@@ -48,11 +49,11 @@ async def upload_resume(
             "file_url": file_url
         }).execute()
         
-        return {
+        return success_response({
             "resume_id": resume.data[0]["id"],
             "file_url": file_url,
             "message": "Resume uploaded successfully"
-        }
+        })
         
     except Exception as e:
         raise HTTPException(500, f"Upload failed: {str(e)}")
@@ -80,8 +81,6 @@ async def parse_resume(resume_id: str,
         
         # 3. Extract text
         text = extract_text_from_pdf(pdf_bytes)
-        print("Extracted Text Length:", len(text))  # Debugging log
-        
         if not text or len(text) < 100:
             raise HTTPException(400, "Could not extract text from PDF")
         
@@ -95,11 +94,11 @@ async def parse_resume(resume_id: str,
         if not update_res.data:
             raise Exception("Update failed")
         
-        return {
+        return success_response({
             "resume_id": resume_id,
             "parsed_data": parsed_data,
             "message": "Resume parsed successfully"
-        }
+        })
         
     except HTTPException:
         raise
@@ -120,4 +119,4 @@ async def get_resume(resume_id: str,
     if not resume.data:
         raise HTTPException(404, "Resume not found")
     
-    return resume.data[0]
+    return success_response({"resume": resume.data[0]})
