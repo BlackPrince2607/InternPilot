@@ -92,8 +92,7 @@ function DualProgressBar({ progress }) {
       <motion.div
         animate={{ opacity: [0.2, 0.85, 0.2], scaleX: [0.9, 1.15, 0.9] }}
         transition={{ duration: 1.3, repeat: Infinity, ease: 'easeInOut' }}
-        className="absolute left-1/2 top-0 h-full w-20 -translate-x-1/2 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.9),rgba(255,255,255,0.15),transparent_70%)] blur-md"
-        style={{ opacity: centerOpacity }}
+        className={`absolute left-1/2 top-0 h-full w-20 -translate-x-1/2 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.9),rgba(255,255,255,0.15),transparent_70%)] blur-md ${centerOpacity >= 1 ? 'opacity-100' : 'opacity-60'}`}
       />
       <motion.div
         animate={{ x: ['-120%', '220%'] }}
@@ -401,6 +400,7 @@ function ResumeUploader() {
     }
 
     setPhase(PHASES.UPLOADING)
+    let currentPhase = PHASES.UPLOADING
     setUploadProgress(0)
     setError('')
     setSuccessMessage('')
@@ -423,6 +423,7 @@ function ResumeUploader() {
 
       setUploadProgress(100)
       setPhase(PHASES.PARSING)
+      currentPhase = PHASES.PARSING
 
       const parseRes = await api.post(`/resumes/parse/${uploadRes.data.resume_id}`)
       if (!parseRes.data?.parsed_data) {
@@ -441,7 +442,7 @@ function ResumeUploader() {
 
       if (status === 401) {
         setError('Your session expired. Please log in again before uploading.')
-      } else if (phase === PHASES.PARSING || /parsing/i.test(detail || '')) {
+      } else if (currentPhase === PHASES.PARSING || /parsing/i.test(detail || '')) {
         setError(detail || 'The upload worked, but parsing failed. Please try again.')
       } else {
         setError(detail || 'Upload failed. Please try again.')
@@ -477,7 +478,7 @@ function ResumeUploader() {
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="space-y-5">
           <motion.div
-            whileHover={{ y: -4 }}
+            whileHover={{ y: -4, scale: 1.006 }}
             onDragEnter={(event) => {
               event.preventDefault()
               if (!isBusy) {
@@ -490,7 +491,6 @@ function ResumeUploader() {
               setIsDragging(false)
             }}
             onDrop={isBusy ? undefined : handleDrop}
-            whileHover={{ scale: 1.006 }}
             transition={{ type: 'spring', stiffness: 220, damping: 20 }}
             className={`group relative overflow-hidden rounded-[28px] border border-dashed p-6 transition sm:p-8 ${
               isDragging
@@ -520,6 +520,7 @@ function ResumeUploader() {
               transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
               className="absolute -right-20 top-4 h-40 w-40 rounded-full bg-cyan-400/10 blur-3xl"
             />
+
             <div className="relative">
               <motion.div
                 animate={{
@@ -534,10 +535,12 @@ function ResumeUploader() {
               >
                 ✦
               </motion.div>
+
               <h3 className="text-xl font-semibold tracking-tight text-white">
                 Drag & drop your PDF resume
               </h3>
-              <p className="mt-2 max-w-xl text-sm leading-6 text-slate-400">
+
+              <p className="mt-2 text-sm leading-6 text-slate-300">
                 Or browse from your device. We only accept PDF files, and the upload is tied to
                 your authenticated account.
               </p>

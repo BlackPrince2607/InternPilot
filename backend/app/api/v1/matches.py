@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends
@@ -9,11 +11,34 @@ from app.api.v1.auth import get_current_user
 from app.core.api_response import success_response
 from app.dependencies.supabase import get_supabase_client
 from app.services.behavior_ranker import load_behavior_profile
+from app.services.embedding_service import get_embedding
 from app.services.match_engine import MatchEngine, build_user_profile
 from app.services.retrieval_engine import RetrievalEngine
 from app.utils.matching import location_matches, role_matches_title
 
 router = APIRouter(prefix="/matches", tags=["matches"])
+logger = logging.getLogger(__name__)
+
+_JOB_SELECT = """
+    id,
+    company_id,
+    external_id,
+    title,
+    location,
+    remote_type,
+    description,
+    apply_url,
+    source_name,
+    experience_level,
+    posted_at,
+    score,
+    is_active,
+    skills_required,
+    raw_data,
+    job_domain,
+    job_embedding,
+    companies:company_id(id,name,careers_url,quality_score)
+"""
 
 _DEBUG_REASON_KEYS = (
     "low_skill_overlap",
@@ -23,8 +48,8 @@ _DEBUG_REASON_KEYS = (
     "below_threshold",
 )
 
-_ADAPTIVE_MINIMUM_SCORE = 0.40
-_ADAPTIVE_MIN_STRICT_MATCHES = 8
+_ADAPTIVE_MINIMUM_SCORE = 0.38
+_ADAPTIVE_MIN_STRICT_MATCHES = 12
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -109,21 +134,33 @@ def _prefilter_jobs_by_preferences(
 def _update_job_scores_in_batches(supabase, updates: list[dict[str, Any]], batch_size: int = 250) -> None:
     for i in range(0, len(updates), batch_size):
         batch = updates[i : i + batch_size]
-        for item in batch:
-            job_id = item.get("id")
-            if not job_id:
-                continue
-            (
-                supabase.table("jobs")
-                .update({"score": item.get("score")})
-                .eq("id", job_id)
-                .execute()
-            )
+        payload = [
+            {"id": item["id"], "score": item["score"]}
+            for item in batch
+            if item.get("id") and item.get("score") is not None
+        ]
+        if payload:
+            supabase.table("jobs").upsert(payload, on_conflict="id").execute()
+
+
+def _save_resume_embedding(supabase, resume_id: str, embedding: list[float]) -> None:
+    try:
+        (
+            supabase.table("resumes")
+            .update({"resume_embedding": embedding})
+            .eq("id", resume_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.info("Skipping resume embedding cache update: %s", exc)
 
 
 def _latest_resume_for_user(supabase, user_id: str) -> dict[str, Any] | None:
     # Prefer uploaded_at when available, then created_at, then id as last-resort fallback.
     queries = [
+        ("id, extracted_data, resume_embedding, uploaded_at", "uploaded_at"),
+        ("id, extracted_data, resume_embedding, created_at", "created_at"),
+        ("id, extracted_data, resume_embedding", "id"),
         ("id, extracted_data, uploaded_at", "uploaded_at"),
         ("id, extracted_data, created_at", "created_at"),
         ("id, extracted_data", "id"),
@@ -147,12 +184,59 @@ def _latest_resume_for_user(supabase, user_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _location_filter(preferred_locations: list[str]) -> str:
+    filters: list[str] = []
+    for location in preferred_locations:
+        clean = str(location or "").strip().replace(",", " ")
+        if clean:
+            filters.append(f"location.ilike.%{clean}%")
+    return ",".join(filters)
+
+
+def _execute_jobs_query(supabase, domain: str | None, location_filter: str, limit: int = 500) -> list[dict[str, Any]]:
+    query = supabase.table("jobs").select(_JOB_SELECT).eq("is_active", True)
+    if domain:
+        query = query.eq("job_domain", domain)
+    if location_filter:
+        query = query.or_(location_filter)
+    return (query.limit(limit).execute().data or [])[:limit]
+
+
+def _fetch_candidate_jobs(
+    supabase,
+    user_domain: str,
+    preferred_locations: list[str],
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    location_filter = _location_filter(preferred_locations)
+    domains = [user_domain] if user_domain and user_domain != "general" else [None]
+    if user_domain and user_domain != "general":
+        domains.append("general")
+
+    merged: list[dict[str, Any]] = []
+    seen_ids: set[Any] = set()
+
+    for domain in domains:
+        for job in _execute_jobs_query(supabase, domain, location_filter, limit):
+            job_id = job.get("id")
+            if job_id in seen_ids:
+                continue
+            seen_ids.add(job_id)
+            merged.append(job)
+            if len(merged) >= limit:
+                return merged
+
+    return merged[:limit]
+
+
 @router.get("")
 @router.get("/")
 async def get_matches(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
+    t0 = time.perf_counter()
+    logger.info("GET /matches started")
     supabase = get_supabase_client()
 
     resume_row = _latest_resume_for_user(supabase, current_user["id"])
@@ -167,37 +251,10 @@ async def get_matches(
     )
     preferences = pref_res.data[0] if pref_res.data else {}
 
-    jobs_res = (
-        supabase.table("jobs")
-        .select(
-            """
-            id,
-            company_id,
-            external_id,
-            title,
-            location,
-            remote_type,
-            description,
-            apply_url,
-            source_name,
-            experience_level,
-            posted_at,
-            score,
-            is_active,
-            skills_required,
-            raw_data,
-            companies:company_id(id,name,careers_url,quality_score)
-        """
-        )
-        .eq("is_active", True)
-        .limit(700)
-        .execute()
-    )
-    jobs = jobs_res.data or []
-
     rejection_reasons: dict[str, int] = {key: 0 for key in _DEBUG_REASON_KEYS}
 
     if not extracted_data:
+        logger.info("Matches computed in %.2fs", time.perf_counter() - t0)
         return success_response(
             {
                 "matches": [],
@@ -206,7 +263,7 @@ async def get_matches(
                     "message": "Upload and parse your resume first to generate personalized matches.",
                 },
                 "debug": {
-                    "total_jobs": len(jobs),
+                    "total_jobs": 0,
                     "retrieved_jobs": 0,
                     "strict_matches": 0,
                     "near_matches": 0,
@@ -215,7 +272,13 @@ async def get_matches(
             }
         )
 
+    user_profile = build_user_profile(extracted_data, preferences)
+    user_domain = user_profile.domain or "general"
+    user_locations = user_profile.preferred_locations or []
+    jobs = _fetch_candidate_jobs(supabase, user_domain, user_locations, limit=500)
+
     if not jobs:
+        logger.info("Matches computed in %.2fs", time.perf_counter() - t0)
         return success_response(
             {
                 "matches": [],
@@ -233,20 +296,33 @@ async def get_matches(
             }
         )
 
-    user_profile = build_user_profile(extracted_data, preferences)
     candidate_jobs = _prefilter_jobs_by_preferences(
         jobs,
         user_profile.preferred_roles,
         user_profile.preferred_locations,
         user_profile.remote_ok,
-        hard_limit=320,
+        hard_limit=380,
     )
 
     behavior_profile = load_behavior_profile(supabase, current_user["id"])
     engine = MatchEngine(user_profile, behavior_profile=behavior_profile)
-    retrieval_top_k = min(110, max(50, len(candidate_jobs)))
-    retrieval_engine = RetrievalEngine(top_k=retrieval_top_k)
-    candidates = retrieval_engine.retrieve(user_profile.resume_text, candidate_jobs)
+    retrieval_engine = RetrievalEngine(top_k=200)
+    resume_embedding = (resume_row or {}).get("resume_embedding")
+    if isinstance(resume_embedding, list) and resume_embedding:
+        candidates = retrieval_engine.retrieve_with_embeddings(
+            resume_embedding,
+            candidate_jobs,
+            resume_text=user_profile.resume_text,
+        )
+    else:
+        resume_embedding = get_embedding(user_profile.resume_text)
+        if resume_embedding and resume_row and resume_row.get("id"):
+            background_tasks.add_task(_save_resume_embedding, supabase, resume_row["id"], resume_embedding)
+        candidates = retrieval_engine.retrieve_with_embeddings(
+            resume_embedding,
+            candidate_jobs,
+            resume_text=user_profile.resume_text,
+        )
 
     rank_updates: list[dict[str, Any]] = []
     matches: list[dict[str, Any]] = []
@@ -406,9 +482,10 @@ async def get_matches(
 
     if not matches and near_matches:
         near_matches.sort(key=lambda item: item["final_score"], reverse=True)
+        logger.info("Matches computed in %.2fs", time.perf_counter() - t0)
         return success_response(
             {
-                "matches": near_matches[:50],
+                "matches": near_matches[:100],
                 "meta": {
                     "fallback": True,
                     "message": "Showing near-matches because strict filters returned no exact matches.",
@@ -457,8 +534,9 @@ async def get_matches(
                 "penalties": ["Personalized signals were insufficient for strict match scoring."],
                 "domain": "general",
             }
-            for job in fallback_jobs[:50]
+            for job in fallback_jobs[:100]
         ]
+        logger.info("Matches computed in %.2fs", time.perf_counter() - t0)
         return success_response(
             {
                 "matches": light_matches,
@@ -471,4 +549,5 @@ async def get_matches(
         )
 
     matches.sort(key=lambda item: item["final_score"], reverse=True)
-    return success_response({"matches": matches[:50], "meta": {"fallback": False}, "debug": debug_payload})
+    logger.info("Matches computed in %.2fs", time.perf_counter() - t0)
+    return success_response({"matches": matches[:100], "meta": {"fallback": False}, "debug": debug_payload})

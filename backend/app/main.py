@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
+import asyncio
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -14,6 +16,7 @@ from app.services.schema_guard import validate_required_schema
 
 ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 load_dotenv(ENV_PATH)
+logger = logging.getLogger(__name__)
 
 allowed_origins = [
     origin.strip()
@@ -25,6 +28,13 @@ allowed_origins = [
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_required_schema()
+    from app.services.embedding_service import _get_model
+
+    try:
+        await asyncio.get_event_loop().run_in_executor(None, _get_model)
+        logger.info("Embedding model loaded and ready")
+    except Exception as e:
+        logger.warning("Embedding model warm-up failed: %s", e)
     start_scheduler()
     yield
     stop_scheduler()

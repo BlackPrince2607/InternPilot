@@ -66,6 +66,10 @@ def get_embeddings_batch(texts: list[str]) -> list[list[float]]:
 
 
 def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+    return cosine_similarity_fast(vec_a, vec_b)
+
+
+def cosine_similarity_fast(vec_a: list[float], vec_b: list[float]) -> float:
     if not vec_a or not vec_b:
         return 0.0
 

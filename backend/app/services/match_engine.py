@@ -183,9 +183,9 @@ def build_user_profile(extracted_data: dict[str, Any], preferences: dict[str, An
 
 
 class MatchEngine:
-    min_skill_overlap = 0.16
-    min_semantic_similarity = 0.30
-    minimum_score = 0.46
+    min_skill_overlap = 0.13
+    min_semantic_similarity = 0.27
+    minimum_score = 0.42
 
     def __init__(self, user_profile: UserProfile, behavior_profile: BehaviorProfile | None = None) -> None:
         self.user = user_profile
@@ -220,7 +220,7 @@ class MatchEngine:
             return MatchResult(accepted=False, filter_reason="low_semantic_similarity", domain=job_profile.domain)
 
         role_match_score = self._role_match_score(title)
-        if self.user.preferred_roles and role_match_score < 0.35:
+        if self.user.preferred_roles and role_match_score < 0.30:
             return MatchResult(accepted=False, filter_reason="role_mismatch", domain=job_profile.domain)
 
         location_match_score = self._location_match_score(location)
@@ -228,8 +228,8 @@ class MatchEngine:
             not self.user.remote_ok
             and self.user.preferred_locations
             and location_match_score <= 0.0
-            and semantic_similarity_score < 0.45
-            and skill_overlap < 0.28
+            and semantic_similarity_score < 0.40
+            and skill_overlap < 0.24
         ):
             return MatchResult(accepted=False, filter_reason="location_mismatch", domain=job_profile.domain)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.embedding_service import cosine_similarity, get_embedding, get_embeddings_batch
+from app.services.embedding_service import cosine_similarity_fast, get_embedding
 from app.services.skill_normalizer import extract_terms_from_text
 
 
@@ -16,8 +16,23 @@ class RetrievedCandidate:
 class RetrievalEngine:
     def __init__(self, top_k: int = 200) -> None:
         self.top_k = top_k
+        self.min_similarity = 0.35
 
     def retrieve(self, resume_text: str, jobs: list[dict[str, Any]]) -> list[RetrievedCandidate]:
+        return self.retrieve_with_stored_embeddings(resume_text, jobs)
+
+    def retrieve_with_stored_embeddings(
+        self, resume_text: str, jobs: list[dict[str, Any]]
+    ) -> list[RetrievedCandidate]:
+        resume_embedding = get_embedding(resume_text)
+        return self.retrieve_with_embeddings(resume_embedding, jobs, resume_text=resume_text)
+
+    def retrieve_with_embeddings(
+        self,
+        resume_embedding: list[float],
+        jobs: list[dict[str, Any]],
+        resume_text: str = "",
+    ) -> list[RetrievedCandidate]:
         if not jobs:
             return []
 
@@ -31,18 +46,24 @@ class RetrievalEngine:
 
         # Try semantic reranking on shortlist; gracefully fall back if model work fails/blocks.
         try:
-            resume_embedding = get_embedding(resume_text)
             if not resume_embedding:
                 raise ValueError("empty_resume_embedding")
 
-            job_texts = [self._job_text(job) for job in shortlist_jobs]
-            job_embeddings = get_embeddings_batch(job_texts)
-
-            candidates = [
-                RetrievedCandidate(job=job, semantic_similarity=cosine_similarity(resume_embedding, embedding))
-                for job, embedding in zip(shortlist_jobs, job_embeddings)
-            ]
+            candidates: list[RetrievedCandidate] = []
+            for job in shortlist_jobs:
+                job_embedding = job.get("job_embedding")
+                if not isinstance(job_embedding, list):
+                    job_embedding = get_embedding(self._job_text(job))
+                candidates.append(
+                    RetrievedCandidate(
+                        job=job,
+                        semantic_similarity=cosine_similarity_fast(resume_embedding, job_embedding),
+                    )
+                )
             candidates.sort(key=lambda item: item.semantic_similarity, reverse=True)
+            candidates = [
+                candidate for candidate in candidates if candidate.semantic_similarity >= self.min_similarity
+            ]
             return candidates[: self.top_k]
         except Exception:
             # Lexical fallback prevents infinite loading and still respects user/profile text.

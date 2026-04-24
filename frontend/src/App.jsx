@@ -2,9 +2,12 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 
 import ProtectedRoute from './components/ProtectedRoute'
 import Matches from './components/Matches'
+import ColdEmail from './components/ColdEmail'
+import Tracker from './components/Tracker'
 import LandingPage from './components/LandingPage'
 import Login from './components/Login'
 import Signup from './components/Signup'
+import AppLayout from './components/layout/AppLayout'
 import Onboarding from './pages/Onboarding'
 import Preferences from './pages/Preferences'
 import Images from './pages/Images'
@@ -21,7 +24,9 @@ function App() {
           path="/app"
           element={
             <ProtectedRoute>
-              <Onboarding />
+              <AppLayout>
+                <Onboarding />
+              </AppLayout>
             </ProtectedRoute>
           }
         />
@@ -29,7 +34,9 @@ function App() {
           path="/preferences"
           element={
             <ProtectedRoute>
-              <Preferences />
+              <AppLayout>
+                <Preferences />
+              </AppLayout>
             </ProtectedRoute>
           }
         />
@@ -37,7 +44,29 @@ function App() {
           path="/matches"
           element={
             <ProtectedRoute>
-              <Matches />
+              <AppLayout>
+                <Matches />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/cold-email"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <ColdEmail />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tracker"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <Tracker />
+              </AppLayout>
             </ProtectedRoute>
           }
         />
@@ -45,7 +74,9 @@ function App() {
           path="/images"
           element={
             <ProtectedRoute>
-              <Images />
+              <AppLayout>
+                <Images />
+              </AppLayout>
             </ProtectedRoute>
           }
         />
