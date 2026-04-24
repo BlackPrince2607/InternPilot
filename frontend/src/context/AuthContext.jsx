@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react'
+import api from '../lib/api'
 import { supabase } from '../lib/supabase'
 
 const AuthContext = createContext()
@@ -8,12 +9,25 @@ export const AuthProvider = ({ children }) => {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  const syncBackendUser = async (activeSession) => {
+    if (!activeSession) {
+      return
+    }
+
+    try {
+      await api.get('/auth/me')
+    } catch {
+      // Keep frontend session alive; route-level API calls will show actionable errors.
+    }
+  }
+
   // Get session on load
   useEffect(() => {
     const getSession = async () => {
       const { data } = await supabase.auth.getSession()
       setSession(data.session || null)
       setUser(data.session?.user || null)
+      await syncBackendUser(data.session || null)
       setLoading(false)
     }
 
@@ -24,6 +38,9 @@ export const AuthProvider = ({ children }) => {
       (_event, session) => {
         setSession(session || null)
         setUser(session?.user || null)
+        if (session) {
+          syncBackendUser(session)
+        }
         setLoading(false)
       }
     )

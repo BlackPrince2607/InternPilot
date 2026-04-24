@@ -425,12 +425,15 @@ function ResumeUploader() {
       setPhase(PHASES.PARSING)
 
       const parseRes = await api.post(`/resumes/parse/${uploadRes.data.resume_id}`)
+      if (!parseRes.data?.parsed_data) {
+        throw new Error('Parsed resume data is missing from response')
+      }
 
       setParsedData(parseRes.data.parsed_data)
       setPhase(PHASES.SUCCESS)
       setSuccessMessage('Resume uploaded and parsed successfully.')
     } catch (err) {
-      const detail = err.response?.data?.detail
+      const detail = err.response?.data?.error || err.response?.data?.detail || err.message
       const status = err.response?.status
 
       setPhase(PHASES.ERROR)

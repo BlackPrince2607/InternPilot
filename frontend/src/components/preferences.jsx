@@ -29,6 +29,8 @@ function Preferences() {
   const [remoteOk, setRemoteOk] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
   const { isAuthenticated } = useAuth()
 
   useEffect(() => {
@@ -37,6 +39,7 @@ function Preferences() {
         return
       }
 
+      setLoading(true)
       try {
         const res = await api.get('/preferences/me')
         const prefs = res.data.preferences
@@ -50,8 +53,10 @@ function Preferences() {
         setRemoteOk(!!prefs.remote_ok)
       } catch (err) {
         if (err.response?.status !== 404) {
-          setError(err.response?.data?.detail || 'Failed to load preferences')
+          setError(err.response?.data?.error || err.response?.data?.detail || 'Failed to load preferences')
         }
+      } finally {
+        setLoading(false)
       }
     }
 
@@ -77,6 +82,10 @@ function Preferences() {
       return
     }
 
+    setSaving(true)
+    setError('')
+    setSaved(false)
+
     try {
       await api.post('/preferences/save', {
         preferred_roles: selectedRoles,
@@ -85,13 +94,15 @@ function Preferences() {
       })
 
       setSaved(true)
-      setError('')
+      setTimeout(() => setSaved(false), 3000)
     } catch (err) {
       if (err.response?.status === 401) {
         setError('Your session expired. Please log in again.')
       } else {
-        setError(err.response?.data?.detail || 'Failed to save preferences')
+        setError(err.response?.data?.error || err.response?.data?.detail || 'Failed to save preferences')
       }
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -182,12 +193,13 @@ function Preferences() {
       )}
 
       <motion.button
-        whileHover={{ scale: 1.03 }}
-        whileTap={{ scale: 0.98 }}
+        whileHover={saving ? undefined : { scale: 1.03 }}
+        whileTap={saving ? undefined : { scale: 0.98 }}
         onClick={handleSave}
-        className="inline-flex w-full items-center justify-center rounded-2xl bg-blue-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/35 transition hover:bg-blue-400"
+        disabled={saving || loading}
+        className="inline-flex w-full items-center justify-center rounded-2xl bg-blue-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/35 transition hover:bg-blue-400 disabled:opacity-60 disabled:cursor-not-allowed"
       >
-        Save Preferences
+        {saving ? 'Saving...' : 'Save Preferences'}
       </motion.button>
     </motion.aside>
   )
