@@ -1,11 +1,12 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 
-import Login from './components/Login'
-import Signup from './components/Signup'
 import ProtectedRoute from './components/ProtectedRoute'
-import Home from './components/Home'
 import Matches from './components/Matches'
 import LandingPage from './components/LandingPage'
+import Login from './components/Login'
+import Signup from './components/Signup'
+import Onboarding from './pages/Onboarding'
+import Preferences from './pages/Preferences'
 
 function App() {
   return (
@@ -19,7 +20,15 @@ function App() {
           path="/app"
           element={
             <ProtectedRoute>
-              <Home />
+              <Onboarding />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/preferences"
+          element={
+            <ProtectedRoute>
+              <Preferences />
             </ProtectedRoute>
           }
         />
