@@ -31,6 +31,7 @@ _JOB_SELECT = """
     source_name,
     experience_level,
     posted_at,
+    stipend,
     score,
     is_active,
     skills_required,
@@ -62,6 +63,52 @@ def _as_dict(value: Any) -> dict[str, Any]:
         except Exception:
             return {}
     return {}
+
+
+def _parse_stipend(stipend_str: str | None) -> int:
+    """Extract monthly stipend as integer from scraped text; 0 means unknown."""
+    if not stipend_str:
+        return 0
+    import re
+
+    cleaned = re.sub(r"[₹$,\s]", "", str(stipend_str).lower())
+    cleaned = re.sub(r"(\d+)k", lambda m: str(int(m.group(1)) * 1000), cleaned)
+    numbers = re.findall(r"\d+", cleaned)
+    if not numbers:
+        return 0
+    return int(numbers[0])
+
+
+def _raw_stipend(job: dict[str, Any]) -> Any:
+    return job.get("stipend") or _as_dict(job.get("raw_data")).get("stipend")
+
+
+def _hydrate_match_stipends(matches: list[dict[str, Any]], jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    jobs_by_id = {job.get("id"): job for job in jobs}
+    for match in matches:
+        job = jobs_by_id.get(match.get("job_id"), {})
+        stipend = _raw_stipend(job)
+        match["stipend"] = stipend
+        match["stipend_amount"] = _parse_stipend(stipend)
+    return matches
+
+
+def _apply_stipend_filter(
+    matches: list[dict[str, Any]],
+    jobs: list[dict[str, Any]],
+    stipend_min: int,
+) -> list[dict[str, Any]]:
+    if stipend_min <= 0:
+        return matches
+
+    jobs_by_id = {job.get("id"): job for job in jobs}
+    filtered: list[dict[str, Any]] = []
+    for match in matches:
+        job = jobs_by_id.get(match.get("job_id"), {})
+        parsed = _parse_stipend(_raw_stipend(job))
+        if parsed == 0 or parsed >= stipend_min:
+            filtered.append(match)
+    return filtered
 
 
 def _candidate_fallback_score(result_final: float, semantic_similarity: float) -> float:
@@ -135,12 +182,17 @@ def _update_job_scores_in_batches(supabase, updates: list[dict[str, Any]], batch
     for i in range(0, len(updates), batch_size):
         batch = updates[i : i + batch_size]
         payload = [
-            {"id": item["id"], "score": item["score"]}
+            (item.get("id"), item.get("score"))
             for item in batch
             if item.get("id") and item.get("score") is not None
         ]
-        if payload:
-            supabase.table("jobs").upsert(payload, on_conflict="id").execute()
+        for job_id, score in payload:
+            try:
+                # Use update-by-id so we never attempt partial-row inserts that
+                # can violate NOT NULL constraints on the jobs table.
+                supabase.table("jobs").update({"score": score}).eq("id", job_id).execute()
+            except Exception as exc:
+                logger.warning("Skipping score update for job %s: %s", job_id, exc)
 
 
 def _save_resume_embedding(supabase, resume_id: str, embedding: list[float]) -> None:
@@ -206,27 +258,116 @@ def _fetch_candidate_jobs(
     supabase,
     user_domain: str,
     preferred_locations: list[str],
-    limit: int = 500,
+    limit: int = 600,
 ) -> list[dict[str, Any]]:
-    location_filter = _location_filter(preferred_locations)
-    domains = [user_domain] if user_domain and user_domain != "general" else [None]
-    if user_domain and user_domain != "general":
-        domains.append("general")
-
-    merged: list[dict[str, Any]] = []
+    all_jobs: list[dict[str, Any]] = []
     seen_ids: set[Any] = set()
 
-    for domain in domains:
-        for job in _execute_jobs_query(supabase, domain, location_filter, limit):
+    def add_jobs(rows: list[dict[str, Any]] | None) -> None:
+        for job in rows or []:
             job_id = job.get("id")
-            if job_id in seen_ids:
-                continue
-            seen_ids.add(job_id)
-            merged.append(job)
-            if len(merged) >= limit:
-                return merged
+            if job_id and job_id not in seen_ids:
+                seen_ids.add(job_id)
+                all_jobs.append(job)
 
-    return merged[:limit]
+    def base_query():
+        return supabase.table("jobs").select(_JOB_SELECT).eq("is_active", True)
+
+    # Step 1: Exact user domain
+    if user_domain and user_domain != "general":
+        rows = base_query().eq("job_domain", user_domain).limit(200).execute().data or []
+        add_jobs(rows)
+
+    # Step 2: Always include general because many crawled jobs get this tag.
+    rows = base_query().eq("job_domain", "general").limit(150).execute().data or []
+    add_jobs(rows)
+
+    # Step 3: Adjacent domains to avoid over-narrow recall.
+    adjacent_domains = {
+        "backend": ["frontend", "data", "devops"],
+        "frontend": ["backend", "mobile"],
+        "ml": ["data", "backend"],
+        "data": ["ml", "backend"],
+        "devops": ["backend"],
+        "mobile": ["frontend"],
+        "general": ["backend", "frontend", "ml", "data"],
+    }
+    adjacent = adjacent_domains.get(user_domain or "general", [])
+    for adj_domain in adjacent:
+        if len(all_jobs) >= limit:
+            break
+        rows = base_query().eq("job_domain", adj_domain).limit(100).execute().data or []
+        add_jobs(rows)
+
+    # Step 4: Final broad catch-all to guarantee enough candidates.
+    if len(all_jobs) < 300:
+        rows = base_query().limit(300).execute().data or []
+        add_jobs(rows)
+
+    logger.info(
+        "Candidate fetch stage: fetched=%s domain=%s preferred_locations=%s",
+        len(all_jobs),
+        user_domain,
+        len(preferred_locations or []),
+    )
+    return all_jobs[:limit]
+
+
+@router.get("/debug/stats")
+async def match_debug_stats(
+    current_user: dict = Depends(get_current_user),
+):
+    # NOTE: Restrict this endpoint in production (admin-only).
+    supabase = get_supabase_client()
+
+    total = supabase.table("jobs").select("id", count="exact").eq("is_active", True).execute()
+
+    by_domain: dict[str, int] = {}
+    for domain in ["backend", "frontend", "ml", "data", "devops", "mobile", "general"]:
+        count = (
+            supabase.table("jobs")
+            .select("id", count="exact")
+            .eq("is_active", True)
+            .eq("job_domain", domain)
+            .execute()
+        )
+        by_domain[domain] = count.count or 0
+
+    latest = (
+        supabase.table("jobs")
+        .select("title,company_id,created_at,source_name")
+        .eq("is_active", True)
+        .order("created_at", desc=True)
+        .limit(5)
+        .execute()
+    )
+
+    resume = (
+        supabase.table("resumes")
+        .select("id,extracted_data,uploaded_at")
+        .eq("user_id", current_user["id"])
+        .order("uploaded_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    has_parsed_resume = bool(resume.data and resume.data[0].get("extracted_data"))
+
+    total_active_jobs = total.count or 0
+    return success_response(
+        {
+            "total_active_jobs": total_active_jobs,
+            "jobs_by_domain": by_domain,
+            "latest_jobs": latest.data or [],
+            "user_has_parsed_resume": has_parsed_resume,
+            "diagnosis": (
+                "No jobs in DB — run scraper first"
+                if total_active_jobs == 0
+                else "No parsed resume — upload and parse resume first"
+                if not has_parsed_resume
+                else "OK — matching should work"
+            ),
+        }
+    )
 
 
 @router.get("")
@@ -244,12 +385,16 @@ async def get_matches(
 
     pref_res = (
         supabase.table("preferences")
-        .select("preferred_roles,preferred_locations,remote_ok")
+        .select("preferred_roles,preferred_locations,preferred_domains,stipend_min,remote_ok")
         .eq("user_id", current_user["id"])
         .limit(1)
         .execute()
     )
     preferences = pref_res.data[0] if pref_res.data else {}
+    try:
+        stipend_min = max(0, int(preferences.get("stipend_min") or 0))
+    except (TypeError, ValueError):
+        stipend_min = 0
 
     rejection_reasons: dict[str, int] = {key: 0 for key in _DEBUG_REASON_KEYS}
 
@@ -275,7 +420,13 @@ async def get_matches(
     user_profile = build_user_profile(extracted_data, preferences)
     user_domain = user_profile.domain or "general"
     user_locations = user_profile.preferred_locations or []
-    jobs = _fetch_candidate_jobs(supabase, user_domain, user_locations, limit=500)
+    jobs = _fetch_candidate_jobs(
+        supabase,
+        user_domain,
+        user_locations,
+        limit=600,
+    )
+    logger.info("Match stage: candidate_jobs=%s", len(jobs))
 
     if not jobs:
         logger.info("Matches computed in %.2fs", time.perf_counter() - t0)
@@ -303,10 +454,11 @@ async def get_matches(
         user_profile.remote_ok,
         hard_limit=380,
     )
+    logger.info("Match stage: prefiltered_jobs=%s", len(candidate_jobs))
 
     behavior_profile = load_behavior_profile(supabase, current_user["id"])
     engine = MatchEngine(user_profile, behavior_profile=behavior_profile)
-    retrieval_engine = RetrievalEngine(top_k=200)
+    retrieval_engine = RetrievalEngine(top_k=300)
     resume_embedding = (resume_row or {}).get("resume_embedding")
     if isinstance(resume_embedding, list) and resume_embedding:
         candidates = retrieval_engine.retrieve_with_embeddings(
@@ -323,6 +475,7 @@ async def get_matches(
             candidate_jobs,
             resume_text=user_profile.resume_text,
         )
+    logger.info("Match stage: retrieval_candidates=%s", len(candidates))
 
     rank_updates: list[dict[str, Any]] = []
     matches: list[dict[str, Any]] = []
@@ -375,6 +528,7 @@ async def get_matches(
                     or [f"Near match: filtered by {rejection_reason} during strict ranking."],
                     "penalties": result.penalties,
                     "domain": result.domain,
+                    "is_near_match": True,
                 }
             )
             continue
@@ -448,9 +602,10 @@ async def get_matches(
                     "missing_skills": result.missing_skills,
                     "skill_gaps": result.skill_gaps,
                     "reasons": (result.reasons or [])
-                    + ["Accepted by adaptive threshold (0.45) because strict matches were limited."],
+                    + ["Accepted by adaptive threshold (0.38) because strict matches were limited."],
                     "penalties": result.penalties,
                     "domain": result.domain,
+                    "is_near_match": False,
                 }
             )
             needed -= 1
@@ -480,21 +635,7 @@ async def get_matches(
         "rejection_reason_pct": rejection_reason_pct,
     }
 
-    if not matches and near_matches:
-        near_matches.sort(key=lambda item: item["final_score"], reverse=True)
-        logger.info("Matches computed in %.2fs", time.perf_counter() - t0)
-        return success_response(
-            {
-                "matches": near_matches[:100],
-                "meta": {
-                    "fallback": True,
-                    "message": "Showing near-matches because strict filters returned no exact matches.",
-                },
-                "debug": debug_payload,
-            }
-        )
-
-    if not matches:
+    if not matches and not near_matches:
         candidate_semantic_by_job_id = {
             candidate.job.get("id"): float(candidate.semantic_similarity)
             for candidate in candidates
@@ -533,9 +674,14 @@ async def get_matches(
                 "reasons": ["General recommendation while personalized ranking warms up."],
                 "penalties": ["Personalized signals were insufficient for strict match scoring."],
                 "domain": "general",
+                "is_near_match": True,
             }
             for job in fallback_jobs[:100]
         ]
+        light_matches = _hydrate_match_stipends(
+            _apply_stipend_filter(light_matches, jobs, stipend_min),
+            jobs,
+        )
         logger.info("Matches computed in %.2fs", time.perf_counter() - t0)
         return success_response(
             {
@@ -548,6 +694,50 @@ async def get_matches(
             }
         )
 
+    matches = _hydrate_match_stipends(_apply_stipend_filter(matches, jobs, stipend_min), jobs)
+    near_matches = _hydrate_match_stipends(_apply_stipend_filter(near_matches, jobs, stipend_min), jobs)
+    logger.info(
+        "Match stage: strict_after_stipend=%s near_after_stipend=%s",
+        len(matches),
+        len(near_matches),
+    )
+
     matches.sort(key=lambda item: item["final_score"], reverse=True)
+    near_matches.sort(key=lambda item: item["final_score"], reverse=True)
+
+    min_matches_target = 20
+    if len(matches) < min_matches_target:
+        needed = min_matches_target - len(matches)
+        strict_ids = {item.get("job_id") for item in matches}
+        padding = [
+            nm
+            for nm in near_matches
+            if nm.get("job_id") not in strict_ids and float(nm.get("final_score") or 0) > 20
+        ][:needed]
+        for nm in padding:
+            nm["is_near_match"] = True
+        matches.extend(padding)
+        matches.sort(key=lambda item: item["final_score"], reverse=True)
+
+    final_matches = matches[:100]
+    total_strict = len([item for item in final_matches if not item.get("is_near_match")])
+    total_near = len([item for item in final_matches if item.get("is_near_match")])
+    logger.info(
+        "Match stage: final_returned=%s strict=%s near=%s",
+        len(final_matches),
+        total_strict,
+        total_near,
+    )
     logger.info("Matches computed in %.2fs", time.perf_counter() - t0)
-    return success_response({"matches": matches[:100], "meta": {"fallback": False}, "debug": debug_payload})
+    return success_response(
+        {
+            "matches": final_matches,
+            "meta": {
+                "fallback": False,
+                "total_strict": total_strict,
+                "total_near": total_near,
+                "message": None,
+            },
+            "debug": debug_payload,
+        }
+    )

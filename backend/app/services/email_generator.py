@@ -15,29 +15,49 @@ async def generate_cold_email(
     job_title: str | None = None,
     job_description: str | None = None,
     user_note: str | None = None,
+    tone: str = "professional",
 ) -> dict:
     candidate_name = resume_data.get("name") or "The candidate"
     skills = resume_data.get("skills") or {}
     projects = resume_data.get("projects") or []
 
+    tone_instructions = {
+        "professional": (
+            "Tone: Formal and professional. "
+            "Use complete sentences. Show genuine research about the company."
+        ),
+        "casual": (
+            "Tone: Friendly and conversational but still respectful. "
+            "Sound like a real person, not a template. "
+            "Avoid corporate buzzwords."
+        ),
+        "concise": (
+            "Tone: Ultra brief. Maximum 100 words total. "
+            "One sentence intro, one sentence about skills, "
+            "one sentence ask. No fluff whatsoever."
+        ),
+    }
+    tone_instruction = tone_instructions.get(tone, tone_instructions["professional"])
+
     prompt = f"""
-Write a concise professional cold email for an internship application.
+Write a cold email for an internship application.
+{tone_instruction}
 
-Candidate name: {candidate_name}
-Candidate skills: {json.dumps(skills, ensure_ascii=False)}
-Candidate projects: {json.dumps(projects, ensure_ascii=False)}
-Company name: {company_name}
-Recipient email: {recipient_email}
-Job title: {job_title or ""}
-Job description: {job_description or ""}
-User note: {user_note or ""}
+Candidate: {candidate_name}
+Skills: {json.dumps(skills, ensure_ascii=False)}
+Projects: {json.dumps(projects, ensure_ascii=False)}
+Company: {company_name}
+Role: {job_title or "Software Engineering Intern"}
+Job description context: {(job_description or "")[:500]}
+Special note from candidate: {user_note or "None"}
 
-Requirements:
-- Max 200 words
-- No fluff
-- Do not use generic phrases like "I hope this email finds you well"
-- Personalize it to the company and role when details are available
-- Return JSON with exactly these keys: subject, body
+Rules:
+- Max 200 words (except concise tone: max 100 words)
+- No "I hope this email finds you well"
+- No generic openers
+- Reference at least one specific skill or project
+- End with a clear, specific ask
+- Return JSON with keys: subject, body
 """
 
     logger.info("Generating cold email for company=%s job_title=%s", company_name, job_title or "")

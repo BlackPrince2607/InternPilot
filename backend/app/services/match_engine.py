@@ -23,6 +23,7 @@ from app.utils.matching import location_matches, role_matches_title
 @dataclass(slots=True)
 class UserProfile:
     domain: str
+    preferred_domains: list[str]
     base_skills: set[str]
     core_skills: set[str]
     project_skills: set[str]
@@ -141,6 +142,11 @@ def build_user_profile(extracted_data: dict[str, Any], preferences: dict[str, An
     preferences = preferences or {}
     preferred_roles = normalize_terms(preferences.get("preferred_roles"))
     preferred_locations = normalize_terms(preferences.get("preferred_locations"))
+    preferred_domains = [
+        str(domain).strip()
+        for domain in preferences.get("preferred_domains") or []
+        if str(domain or "").strip()
+    ][:3]
     remote_ok = bool(preferences.get("remote_ok"))
 
     project_skills, experience_skills, skill_depth = _build_skill_depth(extracted_data)
@@ -165,9 +171,26 @@ def build_user_profile(extracted_data: dict[str, Any], preferences: dict[str, An
         resume_text,
         skills=list(base_skills | project_skills | experience_skills),
     )
+    if preferred_domains:
+        domain_map = {
+            "backend": "backend",
+            "frontend": "frontend",
+            "full stack": "backend",
+            "ml/ai": "ml",
+            "data science": "data",
+            "devops": "devops",
+            "mobile": "mobile",
+        }
+        mapped = [
+            domain_map.get(preferred_domain.lower(), "general")
+            for preferred_domain in preferred_domains
+        ]
+        if mapped and mapped[0] != "general":
+            domain = mapped[0]
 
     return UserProfile(
         domain=domain,
+        preferred_domains=preferred_domains,
         base_skills=base_skills,
         core_skills=core_skills,
         project_skills=project_skills,
@@ -183,9 +206,10 @@ def build_user_profile(extracted_data: dict[str, Any], preferences: dict[str, An
 
 
 class MatchEngine:
-    min_skill_overlap = 0.13
-    min_semantic_similarity = 0.27
-    minimum_score = 0.42
+    # Soft thresholds: only truly unrelated jobs are hard-rejected.
+    min_skill_overlap = 0.08
+    min_semantic_similarity = 0.15
+    minimum_score = 0.35
 
     def __init__(self, user_profile: UserProfile, behavior_profile: BehaviorProfile | None = None) -> None:
         self.user = user_profile
@@ -200,8 +224,24 @@ class MatchEngine:
         job_profile = extract_job_skill_profile(job)
         title = str(job.get("title") or "")
         location = str(job.get("location") or "")
+
+        # Domain is mostly a soft signal now.
         domain_score = domain_similarity(self.user.domain, job_profile.domain)
-        if domain_score <= 0.10:
+        if self.user.preferred_domains:
+            domain_map = {
+                "backend": "backend",
+                "frontend": "frontend",
+                "full stack": "backend",
+                "ml/ai": "ml",
+                "data science": "data",
+                "devops": "devops",
+                "mobile": "mobile",
+            }
+            for pref_domain in self.user.preferred_domains:
+                mapped = domain_map.get(pref_domain.lower(), "general")
+                alt_score = domain_similarity(mapped, job_profile.domain)
+                domain_score = max(domain_score, alt_score)
+        if domain_score == 0.0:
             return MatchResult(accepted=False, filter_reason="domain_mismatch", domain=job_profile.domain)
 
         relevant_job_skills = _clean_skill_values(
@@ -209,30 +249,16 @@ class MatchEngine:
         )
         if not relevant_job_skills:
             relevant_job_skills = _clean_skill_values(set(job_profile.weighted_keywords.keys()))
-        if not relevant_job_skills:
-            return MatchResult(accepted=False, filter_reason="missing_job_skills", domain=job_profile.domain)
 
         skill_overlap, matched_skills = self._weighted_skill_match(job_profile, relevant_job_skills)
-        if skill_overlap < self.min_skill_overlap:
+        if skill_overlap < self.min_skill_overlap and len(relevant_job_skills) > 3:
             return MatchResult(accepted=False, filter_reason="low_skill_overlap", domain=job_profile.domain)
 
         if semantic_similarity_score < self.min_semantic_similarity:
             return MatchResult(accepted=False, filter_reason="low_semantic_similarity", domain=job_profile.domain)
 
         role_match_score = self._role_match_score(title)
-        if self.user.preferred_roles and role_match_score < 0.30:
-            return MatchResult(accepted=False, filter_reason="role_mismatch", domain=job_profile.domain)
-
         location_match_score = self._location_match_score(location)
-        if (
-            not self.user.remote_ok
-            and self.user.preferred_locations
-            and location_match_score <= 0.0
-            and semantic_similarity_score < 0.40
-            and skill_overlap < 0.24
-        ):
-            return MatchResult(accepted=False, filter_reason="location_mismatch", domain=job_profile.domain)
-
         preference_score = _clip01(0.65 * role_match_score + 0.35 * location_match_score)
 
         project_relevance = self._project_relevance(job_profile)
@@ -240,28 +266,30 @@ class MatchEngine:
         behavior_score = compute_behavior_score(self.behavior, job_profile)
 
         final_score = (
-            0.50 * skill_overlap
-            + 0.30 * semantic_similarity_score
-            + 0.20 * preference_score
+            0.40 * skill_overlap
+            + 0.25 * semantic_similarity_score
+            + 0.15 * preference_score
+            + 0.10 * project_relevance
+            + 0.10 * domain_score
         )
 
         penalties: list[str] = []
-        missing_critical = [skill for skill in job_profile.critical_skills if skill not in matched_skills]
         if domain_score < 0.45:
-            final_score *= 0.85
+            final_score *= 0.88
             penalties.append("Partial domain mismatch")
-        if skill_overlap < 0.22:
+        if skill_overlap < 0.20:
             final_score *= 0.85
-            penalties.append("Low core skill overlap")
-        if len(missing_critical) > 3:
-            final_score *= 0.75
-            penalties.append("Missing multiple critical skills")
+            penalties.append("Low skill overlap")
+        if len(matched_skills) == 0:
+            final_score *= 0.70
+            penalties.append("No direct skill matches found")
         if behavior_score > 0.6:
             final_score *= 1.08
-            penalties.append("Behavior boost from prior interest")
-        elif behavior_score < 0.4:
-            final_score *= 0.92
-            penalties.append("Behavior penalty from prior skips")
+            penalties.append("Boosted by interaction history")
+        if role_match_score >= 1.0:
+            final_score *= 1.05
+        if location_match_score >= 1.0:
+            final_score *= 1.03
 
         final_score = _clip01(final_score)
         missing_skills = _clean_skill_values(relevant_job_skills - matched_skills)
@@ -410,7 +438,24 @@ class MatchEngine:
     def _role_match_score(self, title: str) -> float:
         if not self.user.preferred_roles:
             return 0.6
-        scores = [1.0 if role_matches_title(role, title) else 0.0 for role in self.user.preferred_roles]
+
+        title_tokens = set(normalize_terms(title))
+        scores: list[float] = []
+        for role in self.user.preferred_roles:
+            if role_matches_title(role, title):
+                scores.append(1.0)
+                continue
+
+            role_tokens = set(normalize_terms(role))
+            if not role_tokens or not title_tokens:
+                scores.append(0.0)
+                continue
+
+            overlap = len(role_tokens & title_tokens)
+            token_ratio = overlap / max(1, len(role_tokens))
+            # Partial lexical overlap should be weaker than explicit synonym matches.
+            scores.append(_clip01(0.7 * token_ratio))
+
         return max(scores, default=0.0)
 
     def _location_match_score(self, location: str) -> float:
