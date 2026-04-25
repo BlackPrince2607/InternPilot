@@ -4,6 +4,7 @@ from collections import Counter
 
 from app.services.skill_normalizer import extract_terms_from_text, normalize_skill
 
+# EXPANDED
 DOMAIN_KEYWORDS = {
     "backend": {
         "python",
@@ -20,6 +21,21 @@ DOMAIN_KEYWORDS = {
         "postgresql",
         "mysql",
         "redis",
+        "spring",
+        "hibernate",
+        "grpc",
+        "graphql",
+        "kafka",
+        "rabbitmq",
+        "celery",
+        "rest api",
+        "microservice",
+        "golang",
+        "scala",
+        ".net",
+        "c#",
+        "php",
+        "ruby",
     },
     "frontend": {
         "react",
@@ -33,6 +49,18 @@ DOMAIN_KEYWORDS = {
         "typescript",
         "ui",
         "web",
+        "svelte",
+        "remix",
+        "nuxt",
+        "vite",
+        "webpack",
+        "tailwind",
+        "sass",
+        "less",
+        "storybook",
+        "responsive",
+        "accessibility",
+        "a11y",
     },
     "ml": {
         "machine learning",
@@ -40,10 +68,25 @@ DOMAIN_KEYWORDS = {
         "tensorflow",
         "pytorch",
         "scikit learn",
+        "scikit-learn",
         "computer vision",
         "nlp",
         "ml",
         "ai",
+        "xgboost",
+        "lightgbm",
+        "opencv",
+        "nltk",
+        "spacy",
+        "hugging face",
+        "langchain",
+        "generative ai",
+        "llm",
+        "rag",
+        "yolo",
+        "recommendation",
+        "classification",
+        "regression",
     },
     "data": {
         "data",
@@ -56,6 +99,18 @@ DOMAIN_KEYWORDS = {
         "numpy",
         "business intelligence",
         "data engineering",
+        "tableau",
+        "power bi",
+        "looker",
+        "dbt",
+        "snowflake",
+        "bigquery",
+        "redshift",
+        "kafka",
+        "pipeline",
+        "warehouse",
+        "lakehouse",
+        "elt",
     },
     "devops": {
         "docker",
@@ -68,6 +123,18 @@ DOMAIN_KEYWORDS = {
         "ci/cd",
         "linux",
         "sre",
+        "ansible",
+        "helm",
+        "argocd",
+        "jenkins",
+        "github actions",
+        "gitlab ci",
+        "prometheus",
+        "grafana",
+        "elk",
+        "splunk",
+        "reliability",
+        "infrastructure",
     },
     "mobile": {
         "android",
@@ -77,30 +144,40 @@ DOMAIN_KEYWORDS = {
         "swift",
         "kotlin",
         "mobile",
+        "expo",
+        "swiftui",
+        "jetpack compose",
+        "xamarin",
+        "ionic",
+        "capacitor",
+        "xcode",
+        "android studio",
     },
 }
 
+# EXPANDED
 DOMAIN_SIMILARITY = {
     ("backend", "backend"): 1.0,
-    ("backend", "data"): 0.45,
-    ("backend", "ml"): 0.35,
-    ("backend", "devops"): 0.55,
-    ("backend", "frontend"): 0.25,
-    ("backend", "mobile"): 0.15,
+    ("backend", "data"): 0.55,
+    ("backend", "ml"): 0.45,
+    ("backend", "devops"): 0.65,
+    ("backend", "frontend"): 0.35,
+    ("backend", "mobile"): 0.25,
     ("frontend", "frontend"): 1.0,
-    ("frontend", "mobile"): 0.55,
-    ("frontend", "backend"): 0.25,
-    ("frontend", "data"): 0.05,
+    ("frontend", "mobile"): 0.65,
+    ("frontend", "backend"): 0.35,
+    ("frontend", "data"): 0.15,
     ("ml", "ml"): 1.0,
-    ("ml", "data"): 0.65,
-    ("ml", "backend"): 0.35,
+    ("ml", "data"): 0.75,
+    ("ml", "backend"): 0.45,
     ("data", "data"): 1.0,
-    ("data", "ml"): 0.65,
-    ("data", "backend"): 0.45,
+    ("data", "ml"): 0.75,
+    ("data", "backend"): 0.55,
     ("devops", "devops"): 1.0,
-    ("devops", "backend"): 0.55,
+    ("devops", "backend"): 0.65,
     ("mobile", "mobile"): 1.0,
-    ("mobile", "frontend"): 0.55,
+    ("mobile", "frontend"): 0.65,
+    ("general", "general"): 0.6,
 }
 
 
@@ -117,6 +194,25 @@ def detect_domain(text: str, skills: list[str] | set[str] | None = None) -> tupl
         return "general", dict(counts)
     best = counts.most_common(1)[0][0]
     return best, dict(counts)
+
+
+# EXPANDED
+def detect_domains_multi(text: str, skills: list[str] | set[str] | None = None) -> list[str]:
+    tokens = set(extract_terms_from_text(text or ""))
+    if skills:
+        tokens.update(normalize_skill(skill) for skill in skills if skill)
+
+    counts: Counter[str] = Counter()
+    lowered_text = (text or "").lower()
+    for domain, keywords in DOMAIN_KEYWORDS.items():
+        counts[domain] = sum(1 for keyword in keywords if keyword in tokens or keyword in lowered_text)
+
+    if not counts or max(counts.values()) == 0:
+        return ["general"]
+
+    max_count = max(counts.values())
+    threshold = max(1, max_count * 0.6)
+    return [domain for domain, count in counts.items() if count >= threshold] or ["general"]
 
 
 def domains_compatible(user_domain: str, job_domain: str) -> bool:

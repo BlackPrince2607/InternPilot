@@ -14,9 +14,9 @@ class RetrievedCandidate:
 
 
 class RetrievalEngine:
-    def __init__(self, top_k: int = 200) -> None:
+    def __init__(self, top_k: int = 300) -> None:
         self.top_k = top_k
-        self.min_similarity = 0.35
+        self.min_similarity = 0.20
 
     def retrieve(self, resume_text: str, jobs: list[dict[str, Any]]) -> list[RetrievedCandidate]:
         return self.retrieve_with_stored_embeddings(resume_text, jobs)
@@ -39,7 +39,7 @@ class RetrievalEngine:
         # Fast lexical shortlist first to keep response time predictable.
         lexical_ranked = self._lexical_rank(resume_text, jobs)
         # Keep semantic pass bounded so /matches stays responsive.
-        semantic_shortlist_cap = 180
+        semantic_shortlist_cap = 280
         shortlist_size = min(len(lexical_ranked), min(max(self.top_k * 2, 90), semantic_shortlist_cap))
         shortlist = lexical_ranked[:shortlist_size]
         shortlist_jobs = [item.job for item in shortlist]
@@ -61,10 +61,15 @@ class RetrievalEngine:
                     )
                 )
             candidates.sort(key=lambda item: item.semantic_similarity, reverse=True)
-            candidates = [
+            filtered = [
                 candidate for candidate in candidates if candidate.semantic_similarity >= self.min_similarity
             ]
-            return candidates[: self.top_k]
+            # Keep enough candidates for downstream strict filtering. If the semantic
+            # floor is too aggressive, backfill with top semantic results.
+            minimum_candidate_pool = min(self.top_k, 120)
+            if len(filtered) < minimum_candidate_pool:
+                filtered = candidates[:minimum_candidate_pool]
+            return filtered[: self.top_k]
         except Exception:
             # Lexical fallback prevents infinite loading and still respects user/profile text.
             return shortlist[: self.top_k]

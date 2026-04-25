@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Building2, ChevronDown, MapPin, SearchX } from 'lucide-react'
+import { Building2, ChevronDown, IndianRupee, MapPin, SearchX } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import { InlineAlert } from './ui/feedback'
 
@@ -17,7 +18,31 @@ function confidenceTone(level) {
   return 'border-white/15 bg-white/5 text-slate-300'
 }
 
+const STIPEND_OPTIONS = [
+  { label: 'Any', value: 0 },
+  { label: '₹5k+', value: 5000 },
+  { label: '₹10k+', value: 10000 },
+  { label: '₹20k+', value: 20000 },
+]
+
+function parseStipend(stipend, stipendAmount) {
+  if (Number(stipendAmount || 0) > 0) {
+    return Number(stipendAmount)
+  }
+  if (!stipend) {
+    return 0
+  }
+
+  const cleaned = String(stipend)
+    .toLowerCase()
+    .replace(/[₹$,\s]/g, '')
+    .replace(/(\d+)k/g, (_, value) => String(Number(value) * 1000))
+  const match = cleaned.match(/\d+/)
+  return match ? Number(match[0]) : 0
+}
+
 function Matches() {
+  const navigate = useNavigate()
   const [allMatches, setAllMatches] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -25,6 +50,7 @@ function Matches() {
   const [applyFeedback, setApplyFeedback] = useState('')
   const [activeConfidence, setActiveConfidence] = useState('All')
   const [activeDomain, setActiveDomain] = useState('All')
+  const [activeStipend, setActiveStipend] = useState(0)
   const [expanded, setExpanded] = useState({})
 
   const fetchMatches = async () => {
@@ -70,9 +96,11 @@ function Matches() {
     return allMatches.filter((job) => {
       const confidenceOk = activeConfidence === 'All' || (job.confidence_level || 'Low') === activeConfidence
       const domainOk = activeDomain === 'All' || (job.domain || 'general') === activeDomain
-      return confidenceOk && domainOk
+      const stipend = parseStipend(job.stipend, job.stipend_amount)
+      const stipendOk = activeStipend === 0 || stipend === 0 || stipend >= activeStipend
+      return confidenceOk && domainOk && stipendOk
     })
-  }, [allMatches, activeConfidence, activeDomain])
+  }, [allMatches, activeConfidence, activeDomain, activeStipend])
 
   const averageScore = useMemo(() => {
     if (!filteredMatches.length) {
@@ -94,6 +122,19 @@ function Matches() {
     if (job.apply_url) {
       window.open(job.apply_url, '_blank', 'noopener,noreferrer')
     }
+  }
+
+  const handleSendEmail = (job) => {
+    navigate('/cold-email', {
+      state: {
+        prefill: {
+          company_name: job.company || '',
+          job_title: job.title || '',
+          job_id: job.job_id || '',
+          job_description: '',
+        },
+      },
+    })
   }
 
   return (
@@ -131,6 +172,25 @@ function Matches() {
           <p className="mt-2 text-3xl font-semibold text-white">{averageScore.toFixed(1)}%</p>
         </div>
       </motion.section>
+
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className={`rounded-2xl border px-4 py-3 text-sm ${
+          allMatches.length >= 20
+            ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
+            : allMatches.length > 0
+            ? 'border-amber-400/20 bg-amber-500/10 text-amber-200'
+            : 'border-rose-400/20 bg-rose-500/10 text-rose-200'
+        }`}
+      >
+        {allMatches.length === 0 &&
+          'No matches found. Make sure your resume is parsed and preferences are saved.'}
+        {allMatches.length > 0 && allMatches.length < 20 &&
+          `${allMatches.length} matches found. Try broadening your preferences or re-parsing your resume for more results.`}
+        {allMatches.length >= 20 &&
+          `${allMatches.length} matches found and ranked by fit.`}
+      </motion.div>
 
       {!loading ? (
         <motion.section initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} className="rounded-[24px] border border-white/10 bg-white/5 p-6 backdrop-blur">
@@ -176,6 +236,27 @@ function Matches() {
                 ))}
               </div>
             </div>
+
+            <div>
+              <p className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-400">Stipend</p>
+              <div className="flex flex-wrap gap-2">
+                {STIPEND_OPTIONS.map((option) => (
+                  <motion.button
+                    key={`stipend-${option.value}`}
+                    whileHover={{ scale: 1.03 }}
+                    whileTap={{ scale: 0.97 }}
+                    onClick={() => setActiveStipend(option.value)}
+                    className={`rounded-full border px-3 py-1 text-xs ${
+                      activeStipend === option.value
+                        ? 'border-emerald-400/30 bg-emerald-500/15 text-emerald-100'
+                        : 'border-white/10 bg-white/5 text-slate-300'
+                    }`}
+                  >
+                    {option.label}
+                  </motion.button>
+                ))}
+              </div>
+            </div>
           </div>
         </motion.section>
       ) : null}
@@ -215,7 +296,14 @@ function Matches() {
                 className="rounded-[24px] border border-white/10 bg-slate-900/70 p-6"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <h3 className="text-xl font-semibold text-white">{job.title || 'Untitled role'}</h3>
+                  <div>
+                    <h3 className="text-xl font-semibold text-white">{job.title || 'Untitled role'}</h3>
+                    {job.is_near_match ? (
+                      <span className="mt-2 inline-flex rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-xs text-amber-200">
+                        Near Match
+                      </span>
+                    ) : null}
+                  </div>
                   <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${scoreTone(score)}`}>
                     {score.toFixed(1)}%
                   </span>
@@ -229,6 +317,10 @@ function Matches() {
                   <span className="inline-flex items-center gap-2">
                     <MapPin className="h-4 w-4" />
                     {job.location || 'Unknown location'}
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <IndianRupee className="h-4 w-4" />
+                    {job.stipend || 'Stipend not listed'}
                   </span>
                 </div>
 
@@ -292,19 +384,29 @@ function Matches() {
                   </div>
                 ) : null}
 
-                <div className="mt-5 flex items-center justify-between gap-3">
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
                   <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${confidenceTone(job.confidence_level)}`}>
                     {job.confidence_level || 'Low'} confidence
                   </span>
-                  <motion.button
-                    whileHover={job.apply_url ? { scale: 1.02 } : undefined}
-                    whileTap={job.apply_url ? { scale: 0.98 } : undefined}
-                    onClick={() => handleApply(job)}
-                    disabled={!job.apply_url}
-                    className="rounded-2xl bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400 disabled:opacity-60"
-                  >
-                    {job.apply_url ? 'Apply Now' : 'Apply URL Unavailable'}
-                  </motion.button>
+                  <div className="flex items-center gap-2">
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => handleSendEmail(job)}
+                      className="rounded-2xl border border-violet-400/30 bg-violet-500/15 px-4 py-2 text-sm font-semibold text-violet-100 transition hover:bg-violet-500/25"
+                    >
+                      Cold Email
+                    </motion.button>
+                    <motion.button
+                      whileHover={job.apply_url ? { scale: 1.02 } : undefined}
+                      whileTap={job.apply_url ? { scale: 0.98 } : undefined}
+                      onClick={() => handleApply(job)}
+                      disabled={!job.apply_url}
+                      className="rounded-2xl bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400 disabled:opacity-60"
+                    >
+                      {job.apply_url ? 'Apply Now' : 'Apply URL Unavailable'}
+                    </motion.button>
+                  </div>
                 </div>
               </motion.article>
             )

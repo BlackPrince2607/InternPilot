@@ -21,11 +21,12 @@ MAX_MAILTO_LENGTH = 2000
 
 class GenerateEmailRequest(BaseModel):
     company_name: str
-    recipient_email: str
+    recipient_email: str = ""
     job_id: str | None = None
     job_title: str | None = None
     job_description: str | None = None
     user_note: str | None = None
+    tone: str = "professional"
 
 
 class RecordSentRequest(BaseModel):
@@ -106,6 +107,19 @@ async def generate_email(
         else:
             company_id = JobRepository(supabase=supabase).get_or_create_company(normalized_company_name)
 
+    if not payload.recipient_email and company_id:
+        company_contact_res = (
+            supabase.table("companies")
+            .select("contact_emails")
+            .eq("id", company_id)
+            .limit(1)
+            .execute()
+        )
+        if company_contact_res.data:
+            emails = company_contact_res.data[0].get("contact_emails") or []
+            if emails:
+                payload.recipient_email = emails[0]
+
     try:
         email = await generate_cold_email(
             resume_data=resume_data,
@@ -114,6 +128,7 @@ async def generate_email(
             job_title=job_title,
             job_description=job_description,
             user_note=payload.user_note,
+            tone=payload.tone,
         )
     except ValueError as exc:
         raise HTTPException(502, str(exc)) from exc
@@ -146,6 +161,7 @@ async def generate_email(
             "subject": email["subject"],
             "body": safe_body,
             "mailto_url": mailto_url,
+            "recipient_email": payload.recipient_email,
         }
     )
 
