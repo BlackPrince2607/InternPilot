@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -51,6 +52,32 @@ _DEBUG_REASON_KEYS = (
 
 _ADAPTIVE_MINIMUM_SCORE = 0.38
 _ADAPTIVE_MIN_STRICT_MATCHES = 12
+_COLUMN_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
+_BULK_SCORE_RPC_AVAILABLE: bool | None = None
+_RESUME_EMBEDDING_WARNING_EMITTED = False
+
+
+def _column_exists(supabase, table_name: str, column_name: str) -> bool:
+    key = (table_name, column_name)
+    cached = _COLUMN_EXISTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    try:
+        supabase.table(table_name).select(column_name).limit(1).execute()
+        _COLUMN_EXISTS_CACHE[key] = True
+    except Exception as exc:
+        message = str(exc).lower()
+        if "column" in message and "does not exist" in message:
+            _COLUMN_EXISTS_CACHE[key] = False
+        else:
+            # Unknown error type: prefer conservative behavior.
+            _COLUMN_EXISTS_CACHE[key] = False
+    return _COLUMN_EXISTS_CACHE[key]
+
+
+def _resume_embedding_column_exists(supabase) -> bool:
+    return _column_exists(supabase, "resumes", "resume_embedding")
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -69,14 +96,44 @@ def _parse_stipend(stipend_str: str | None) -> int:
     """Extract monthly stipend as integer from scraped text; 0 means unknown."""
     if not stipend_str:
         return 0
-    import re
 
-    cleaned = re.sub(r"[₹$,\s]", "", str(stipend_str).lower())
-    cleaned = re.sub(r"(\d+)k", lambda m: str(int(m.group(1)) * 1000), cleaned)
-    numbers = re.findall(r"\d+", cleaned)
-    if not numbers:
+    raw = str(stipend_str).strip().lower()
+    if not raw:
         return 0
-    return int(numbers[0])
+
+    if any(token in raw for token in ["unpaid", "performance based", "performance-based", "negotiable", "depends"]):
+        return 0
+
+    cleaned = raw.replace(",", "")
+    yearly_markers = ["per annum", "p.a", "/year", "per year", "annum", "yearly", "annual"]
+    monthly_markers = ["per month", "/month", "p.m", "pm", "monthly", "month"]
+    has_yearly = any(marker in cleaned for marker in yearly_markers)
+    has_monthly = any(marker in cleaned for marker in monthly_markers)
+
+    def _to_amount(number: str, suffix: str) -> int:
+        value = float(number)
+        suffix = (suffix or "").lower()
+        if suffix == "k":
+            value *= 1_000
+        elif suffix in {"l", "lac", "lakh"}:
+            value *= 100_000
+        return int(value)
+
+    amounts: list[int] = []
+    for number, suffix in re.findall(r"(\d+(?:\.\d+)?)\s*(k|l|lac|lakh)?", cleaned):
+        amounts.append(_to_amount(number, suffix))
+
+    if not amounts:
+        return 0
+
+    monthly_value = min(amounts)
+    if monthly_value <= 0:
+        return 0
+
+    if has_yearly and not has_monthly:
+        monthly_value = int(monthly_value / 12)
+
+    return max(0, monthly_value)
 
 
 def _raw_stipend(job: dict[str, Any]) -> Any:
@@ -179,23 +236,52 @@ def _prefilter_jobs_by_preferences(
 
 
 def _update_job_scores_in_batches(supabase, updates: list[dict[str, Any]], batch_size: int = 250) -> None:
+    global _BULK_SCORE_RPC_AVAILABLE
+
     for i in range(0, len(updates), batch_size):
         batch = updates[i : i + batch_size]
-        payload = [
-            (item.get("id"), item.get("score"))
+        job_ids = [
+            item.get("id")
             for item in batch
             if item.get("id") and item.get("score") is not None
         ]
-        for job_id, score in payload:
+        scores = [
+            float(item.get("score"))
+            for item in batch
+            if item.get("id") and item.get("score") is not None
+        ]
+        if not job_ids:
+            continue
+
+        if _BULK_SCORE_RPC_AVAILABLE is not False:
             try:
-                # Use update-by-id so we never attempt partial-row inserts that
-                # can violate NOT NULL constraints on the jobs table.
-                supabase.table("jobs").update({"score": score}).eq("id", job_id).execute()
+                supabase.rpc(
+                    "bulk_update_job_scores",
+                    {"p_job_ids": job_ids, "p_scores": scores},
+                ).execute()
+                _BULK_SCORE_RPC_AVAILABLE = True
+                continue
             except Exception as exc:
-                logger.warning("Skipping score update for job %s: %s", job_id, exc)
+                _BULK_SCORE_RPC_AVAILABLE = False
+                logger.warning("bulk_update_job_scores RPC unavailable; falling back for this batch: %s", exc)
+
+        try:
+            # Best-effort fallback in a single request when RPC is unavailable.
+            payload = [{"id": job_id, "score": score} for job_id, score in zip(job_ids, scores)]
+            supabase.table("jobs").upsert(payload, on_conflict="id").execute()
+        except Exception as exc:
+            logger.warning("Score batch update fallback failed: %s", exc)
 
 
 def _save_resume_embedding(supabase, resume_id: str, embedding: list[float]) -> None:
+    global _RESUME_EMBEDDING_WARNING_EMITTED
+
+    if not _resume_embedding_column_exists(supabase):
+        if not _RESUME_EMBEDDING_WARNING_EMITTED:
+            logger.info("resume_embedding column missing; skipping resume embedding cache updates")
+            _RESUME_EMBEDDING_WARNING_EMITTED = True
+        return
+
     try:
         (
             supabase.table("resumes")
@@ -204,6 +290,13 @@ def _save_resume_embedding(supabase, resume_id: str, embedding: list[float]) -> 
             .execute()
         )
     except Exception as exc:
+        message = str(exc).lower()
+        if "column" in message and "resume_embedding" in message and "does not exist" in message:
+            _COLUMN_EXISTS_CACHE[("resumes", "resume_embedding")] = False
+            if not _RESUME_EMBEDDING_WARNING_EMITTED:
+                logger.info("resume_embedding column missing; recomputing embeddings per request")
+                _RESUME_EMBEDDING_WARNING_EMITTED = True
+            return
         logger.info("Skipping resume embedding cache update: %s", exc)
 
 
@@ -317,57 +410,125 @@ def _fetch_candidate_jobs(
 async def match_debug_stats(
     current_user: dict = Depends(get_current_user),
 ):
-    # NOTE: Restrict this endpoint in production (admin-only).
     supabase = get_supabase_client()
+    notes: list[str] = []
 
-    total = supabase.table("jobs").select("id", count="exact").eq("is_active", True).execute()
+    total_jobs = 0
+    active_jobs = 0
+    jobs_by_domain: dict[str, int] = {}
+    latest_job_created_at: str | None = None
 
-    by_domain: dict[str, int] = {}
-    for domain in ["backend", "frontend", "ml", "data", "devops", "mobile", "general"]:
-        count = (
+    try:
+        total_jobs = supabase.table("jobs").select("id", count="exact").execute().count or 0
+    except Exception as exc:
+        notes.append(f"Could not read total jobs: {exc}")
+
+    try:
+        active_jobs = (
             supabase.table("jobs")
             .select("id", count="exact")
             .eq("is_active", True)
-            .eq("job_domain", domain)
             .execute()
+            .count
+            or 0
         )
-        by_domain[domain] = count.count or 0
+    except Exception as exc:
+        notes.append(f"Could not read active jobs: {exc}")
 
-    latest = (
-        supabase.table("jobs")
-        .select("title,company_id,created_at,source_name")
-        .eq("is_active", True)
-        .order("created_at", desc=True)
-        .limit(5)
-        .execute()
-    )
-
-    resume = (
-        supabase.table("resumes")
-        .select("id,extracted_data,uploaded_at")
-        .eq("user_id", current_user["id"])
-        .order("uploaded_at", desc=True)
-        .limit(1)
-        .execute()
-    )
-    has_parsed_resume = bool(resume.data and resume.data[0].get("extracted_data"))
-
-    total_active_jobs = total.count or 0
-    return success_response(
-        {
-            "total_active_jobs": total_active_jobs,
-            "jobs_by_domain": by_domain,
-            "latest_jobs": latest.data or [],
-            "user_has_parsed_resume": has_parsed_resume,
-            "diagnosis": (
-                "No jobs in DB — run scraper first"
-                if total_active_jobs == 0
-                else "No parsed resume — upload and parse resume first"
-                if not has_parsed_resume
-                else "OK — matching should work"
-            ),
+    if _column_exists(supabase, "jobs", "job_domain"):
+        domain_display = {
+            "backend": "Backend",
+            "frontend": "Frontend",
+            "ml": "ML",
+            "data": "Data",
+            "devops": "DevOps",
+            "mobile": "Mobile",
+            "general": "General",
         }
-    )
+        for raw_domain, label in domain_display.items():
+            try:
+                count = (
+                    supabase.table("jobs")
+                    .select("id", count="exact")
+                    .eq("is_active", True)
+                    .eq("job_domain", raw_domain)
+                    .execute()
+                    .count
+                    or 0
+                )
+            except Exception:
+                count = 0
+            jobs_by_domain[label] = count
+    else:
+        notes.append("job_domain column missing on jobs")
+
+    jobs_by_source: dict[str, int] | None = None
+    if _column_exists(supabase, "jobs", "source_name"):
+        try:
+            source_rows = (
+                supabase.table("jobs")
+                .select("source_name")
+                .eq("is_active", True)
+                .limit(5000)
+                .execute()
+                .data
+                or []
+            )
+            counts: dict[str, int] = {}
+            for row in source_rows:
+                source = str(row.get("source_name") or "unknown").strip() or "unknown"
+                counts[source] = counts.get(source, 0) + 1
+            jobs_by_source = counts
+        except Exception as exc:
+            notes.append(f"Could not read jobs_by_source: {exc}")
+    else:
+        notes.append("source_name column missing on jobs; jobs_by_source omitted")
+
+    if _column_exists(supabase, "jobs", "created_at"):
+        try:
+            latest_row = (
+                supabase.table("jobs")
+                .select("created_at")
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+            latest_job_created_at = latest_row[0].get("created_at") if latest_row else None
+        except Exception as exc:
+            notes.append(f"Could not read latest_job_created_at: {exc}")
+    else:
+        notes.append("created_at column missing on jobs")
+
+    resume_embedding_cached = False
+    has_resume_embedding_col = _resume_embedding_column_exists(supabase)
+    if not has_resume_embedding_col:
+        notes.append("resume_embedding column missing; recomputing each request")
+    else:
+        try:
+            resume_row = _latest_resume_for_user(supabase, current_user["id"])
+            cached_embedding = (resume_row or {}).get("resume_embedding")
+            resume_embedding_cached = isinstance(cached_embedding, list) and len(cached_embedding) > 0
+        except Exception as exc:
+            notes.append(f"Could not read resume embedding cache status: {exc}")
+
+    preferences_has_stipend_min_column = _column_exists(supabase, "preferences", "stipend_min")
+    if not preferences_has_stipend_min_column:
+        notes.append("preferences.stipend_min column missing; stipend filter defaults to 0")
+
+    payload: dict[str, Any] = {
+        "total_jobs": total_jobs,
+        "active_jobs": active_jobs,
+        "jobs_by_domain": jobs_by_domain,
+        "latest_job_created_at": latest_job_created_at,
+        "resume_embedding_cached": resume_embedding_cached,
+        "preferences_has_stipend_min_column": preferences_has_stipend_min_column,
+        "notes": notes,
+    }
+    if jobs_by_source is not None:
+        payload["jobs_by_source"] = jobs_by_source
+    return success_response(payload)
 
 
 @router.get("")
@@ -383,16 +544,27 @@ async def get_matches(
     resume_row = _latest_resume_for_user(supabase, current_user["id"])
     extracted_data = _as_dict((resume_row or {}).get("extracted_data"))
 
+    pref_select = ["preferred_roles", "preferred_locations", "remote_ok"]
+    has_preferred_domains_column = _column_exists(supabase, "preferences", "preferred_domains")
+    has_stipend_min_column = _column_exists(supabase, "preferences", "stipend_min")
+    if has_preferred_domains_column:
+        pref_select.append("preferred_domains")
+    if has_stipend_min_column:
+        pref_select.append("stipend_min")
+
     pref_res = (
         supabase.table("preferences")
-        .select("preferred_roles,preferred_locations,preferred_domains,stipend_min,remote_ok")
+        .select(",".join(pref_select))
         .eq("user_id", current_user["id"])
         .limit(1)
         .execute()
     )
     preferences = pref_res.data[0] if pref_res.data else {}
+    if not has_preferred_domains_column:
+        preferences["preferred_domains"] = []
+
     try:
-        stipend_min = max(0, int(preferences.get("stipend_min") or 0))
+        stipend_min = max(0, int(preferences.get("stipend_min") or 0)) if has_stipend_min_column else 0
     except (TypeError, ValueError):
         stipend_min = 0
 
@@ -459,7 +631,7 @@ async def get_matches(
     behavior_profile = load_behavior_profile(supabase, current_user["id"])
     engine = MatchEngine(user_profile, behavior_profile=behavior_profile)
     retrieval_engine = RetrievalEngine(top_k=300)
-    resume_embedding = (resume_row or {}).get("resume_embedding")
+    resume_embedding = (resume_row or {}).get("resume_embedding") if _resume_embedding_column_exists(supabase) else None
     if isinstance(resume_embedding, list) and resume_embedding:
         candidates = retrieval_engine.retrieve_with_embeddings(
             resume_embedding,

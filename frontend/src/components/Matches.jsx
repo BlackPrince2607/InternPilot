@@ -125,13 +125,29 @@ function Matches() {
   }
 
   const handleSendEmail = (job) => {
+    let companyWebsite = job.company_website || job.careers_url || ''
+    if (!companyWebsite && job.apply_url) {
+      try {
+        companyWebsite = new URL(job.apply_url).origin
+      } catch {
+        companyWebsite = ''
+      }
+    }
+
+    const descriptionSnippet =
+      String(job.description || job.job_description || job.summary || '').slice(0, 500) ||
+      String((job.reasons || [])[0] || '')
+
     navigate('/cold-email', {
       state: {
         prefill: {
           company_name: job.company || '',
           job_title: job.title || '',
           job_id: job.job_id || '',
-          job_description: '',
+          job_description: descriptionSnippet,
+          company_domain: job.company_domain || '',
+          company_website: companyWebsite,
+          recipient_email: job.contact_email || '',
         },
       },
     })
@@ -187,9 +203,9 @@ function Matches() {
         {allMatches.length === 0 &&
           'No matches found. Make sure your resume is parsed and preferences are saved.'}
         {allMatches.length > 0 && allMatches.length < 20 &&
-          `${allMatches.length} matches found. Try broadening your preferences or re-parsing your resume for more results.`}
+          `Showing ${allMatches.length} matches + near matches to help you apply faster`}
         {allMatches.length >= 20 &&
-          `${allMatches.length} matches found and ranked by fit.`}
+          `Showing ${allMatches.length} matches for you`}
       </motion.div>
 
       {!loading ? (
