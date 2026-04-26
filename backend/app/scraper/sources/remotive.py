@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from bs4 import BeautifulSoup
 
 from app.scraper.parser import JobRecord
@@ -11,6 +13,18 @@ from app.scraper.utils import (
     normalize_company_name,
 )
 
+INTERNSHIP_KEYWORDS = [
+    "intern",
+    "internship",
+    "trainee",
+    "apprentice",
+    "co-op",
+    "coop",
+    "graduate",
+    "fresher",
+    "junior",
+]
+
 
 class RemotiveFetcher:
     def __init__(self) -> None:
@@ -19,13 +33,21 @@ class RemotiveFetcher:
     async def fetch(self) -> list[JobRecord]:
         url = "https://remotive.com/api/remote-jobs?category=software-dev&limit=100"
         jobs: list[JobRecord] = []
-        async with build_httpx_async_client(timeout_seconds=20.0) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            payload = response.json()
+        try:
+            async with build_httpx_async_client(timeout_seconds=20.0) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                payload = response.json()
+                await asyncio.sleep(0.5)
+        except Exception as exc:
+            self.logger.warning("Remotive fetch failed: %s", exc)
+            return []
 
         for item in payload.get("jobs", []):
             title = item.get("title") or "Untitled Internship"
+            title_lower = title.lower()
+            if not any(keyword in title_lower for keyword in INTERNSHIP_KEYWORDS):
+                continue
             company_name = normalize_company_name(item.get("company_name") or "Unknown Company")
             apply_url = item.get("url") or ""
             description_html = item.get("description") or ""

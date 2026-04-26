@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import date
 
 from app.scraper.parser import JobRecord
 from app.scraper.utils import (
@@ -14,67 +13,61 @@ from app.scraper.utils import (
 )
 
 
-class AdzunaFetcher:
-    _last_reset_date: date | None = None
-    _runs_today: int = 0
+INTERNSHIP_KEYWORDS = [
+    "intern",
+    "internship",
+    "trainee",
+    "apprentice",
+    "graduate",
+    "junior",
+    "fresher",
+]
 
+
+class AdzunaFetcher:
     def __init__(self) -> None:
         self.logger = get_logger()
         self.app_id = os.getenv("ADZUNA_APP_ID")
         self.app_key = os.getenv("ADZUNA_APP_KEY")
-        self.max_daily_runs = max(1, int(os.getenv("ADZUNA_MAX_DAILY_RUNS", "8")))
 
     def _has_credentials(self) -> bool:
         return bool(self.app_id and self.app_key)
 
-    @classmethod
-    def _register_run(cls) -> bool:
-        today = date.today()
-        if cls._last_reset_date != today:
-            cls._last_reset_date = today
-            cls._runs_today = 0
-        if cls._runs_today >=  cls._get_limit():
-            return False
-        cls._runs_today += 1
-        return True
-
-    @classmethod
-    def _get_limit(cls) -> int:
-        return max(1, int(os.getenv("ADZUNA_MAX_DAILY_RUNS", "8")))
-
     async def fetch(self) -> list[JobRecord]:
         if not self._has_credentials():
-            self.logger.warning("Skipping Adzuna fetch: ADZUNA_APP_ID or ADZUNA_APP_KEY is missing")
-            return []
-
-        if not self._register_run():
-            self.logger.warning("Skipping Adzuna fetch: daily run limit reached")
+            self.logger.warning("Skipping Adzuna: credentials not configured")
             return []
 
         jobs: list[JobRecord] = []
         async with build_httpx_async_client(timeout_seconds=20.0) as client:
-            for page in range(1, 6):
+            for page in range(1, 4):
                 url = f"https://api.adzuna.com/v1/api/jobs/in/search/{page}"
                 params = {
                     "app_id": self.app_id,
                     "app_key": self.app_key,
                     "results_per_page": 50,
-                    "what": "intern OR internship",
+                    "what": "software intern OR developer intern OR engineering intern",
                     "where": "India",
                     "content-type": "application/json",
                 }
                 try:
-                    self.logger.info("Fetching Adzuna page %s", page)
                     response = await client.get(url, params=params)
                     response.raise_for_status()
                     payload = response.json()
                 except Exception as exc:
-                    self.logger.exception("Failed to fetch Adzuna page %s: %s", page, exc)
-                    await asyncio.sleep(1)
-                    continue
+                    self.logger.warning("Adzuna page %s failed: %s", page, exc)
+                    break
 
-                for item in payload.get("results", []):
+                results = payload.get("results", [])
+                if not results:
+                    break
+
+                for item in results:
                     title = item.get("title") or "Untitled Internship"
+                    title_lower = title.lower()
+                    if not any(keyword in title_lower for keyword in INTERNSHIP_KEYWORDS):
+                        continue
+
                     company_name = normalize_company_name(
                         (item.get("company") or {}).get("display_name") or "Unknown Company"
                     )
@@ -96,5 +89,7 @@ class AdzunaFetcher:
                         )
                     )
 
-                await asyncio.sleep(1)
+                await asyncio.sleep(1.2)
+
+        self.logger.info("Adzuna returned %s internship jobs", len(jobs))
         return jobs

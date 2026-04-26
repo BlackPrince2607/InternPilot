@@ -16,6 +16,10 @@ SPAM_PATTERNS = [
     r"\bapply now\b",
     r"\bcall now\b",
     r"\bwhatsapp\b",
+    r"\bno experience required\b",
+    r"\btrained by us\b",
+    r"\bno technical knowledge\b",
+    r"\bwork from home \d+ hours\b",
 ]
 
 NON_TECH_SIGNALS = {
@@ -26,7 +30,6 @@ NON_TECH_SIGNALS = {
     "human resources",
     "recruiter",
     "telecaller",
-    "operations executive",
 }
 
 
@@ -73,7 +76,7 @@ def clean_job_payload(payload: dict[str, Any]) -> CleanedJob:
     )
 
 
-def is_low_information_job(cleaned: CleanedJob, min_description_chars: int = 100) -> bool:
+def is_low_information_job(cleaned: CleanedJob, min_description_chars: int = 150) -> bool:
     if not cleaned.title or not cleaned.company or not cleaned.apply_url:
         return True
     if len(cleaned.description) < min_description_chars:

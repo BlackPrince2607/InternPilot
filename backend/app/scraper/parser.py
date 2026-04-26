@@ -10,11 +10,14 @@ from pydantic import BaseModel, Field
 from app.scraper.utils import (
     extract_skills,
     generate_external_id,
+    get_logger,
     normalize_company_name,
     normalize_location,
     normalize_whitespace,
     utc_now_iso,
 )
+
+logger = get_logger()
 
 
 class JobCard(BaseModel):
@@ -84,7 +87,13 @@ def safe_select_all(element: Tag, selectors: list[str]) -> list[str]:
 
 def parse_listing_page(html: str, base_url: str, source_url: str) -> list[JobCard]:
     soup = BeautifulSoup(html, "html.parser")
-    cards = soup.select("div.individual_internship, div.internship_meta, div[data-internship-id]")
+    cards = soup.select(
+        "[id^='internship_meta_'], "
+        "div.internship_meta_container, "
+        "div.individual_internship, "
+        "div[class*='internship'], "
+        "div[id*='internship']"
+    )
 
     parsed_cards: list[JobCard] = []
     for card in cards:
@@ -93,9 +102,12 @@ def parse_listing_page(html: str, base_url: str, source_url: str) -> list[JobCar
             [
                 "a.job-title-href",
                 "a.job-title",
+                "h3.job-internship-name a",
                 "h3 a",
                 "a[href*='/internship/detail/']",
                 "a[href*='/internship/']",
+                ".job-internship-name",
+                "h3",
             ],
         ) or ""
         company_name = normalize_company_name(
@@ -106,7 +118,10 @@ def parse_listing_page(html: str, base_url: str, source_url: str) -> list[JobCar
                     "a.company-name",
                     "div.company_name",
                     "h4.company-name",
-                    ".company",
+                    "a[href*='/company/']",
+                    ".company_name",
+                    ".company-name",
+                    "p.heading_6.company-name",
                 ],
             )
             or ""
@@ -120,7 +135,9 @@ def parse_listing_page(html: str, base_url: str, source_url: str) -> list[JobCar
                     "span.location_link",
                     "div.locations span",
                     ".row-1-item.locations span",
-                    ".locations",
+                    ".locations a",
+                    "a[href*='/internship/matching-internship/']",
+                    "[id*='location_names']",
                 ],
             )
             if location
@@ -154,6 +171,13 @@ def parse_listing_page(html: str, base_url: str, source_url: str) -> list[JobCar
                     "source_url": source_url,
                 },
             )
+        )
+
+    if not parsed_cards:
+        logger.warning(
+            "Internshala: 0 cards parsed from %s. First 2000 chars of HTML: %s",
+            source_url,
+            html[:2000],
         )
 
     return parsed_cards
