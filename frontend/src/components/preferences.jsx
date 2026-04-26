@@ -66,6 +66,7 @@ function Preferences() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [domainLimitMessage, setDomainLimitMessage] = useState('')
   const { isAuthenticated } = useAuth()
 
   useEffect(() => {
@@ -103,10 +104,18 @@ function Preferences() {
   const toggleItem = (item, list, setList, maxItems) => {
     if (list.includes(item)) {
       setList(list.filter((value) => value !== item))
+      if (maxItems) {
+        setDomainLimitMessage('')
+      }
     } else if (!maxItems || list.length < maxItems) {
       setList([...list, item])
+      if (maxItems) {
+        setDomainLimitMessage('')
+      }
     } else {
-      setError(`Pick up to ${maxItems} domains`)
+      if (maxItems === 3) {
+        setDomainLimitMessage('You can select up to 3 domains')
+      }
     }
   }
 
@@ -188,7 +197,7 @@ function Preferences() {
       <div className="mb-7">
         <h3 className="mb-3 text-sm font-medium text-slate-200">Target Domain</h3>
         <p className="mb-3 text-xs text-slate-500">
-          Pick up to 3. Leave empty to auto-detect from your resume.
+          Pick up to 3
         </p>
         <div className="flex flex-wrap gap-2">
           {DOMAINS.map((domain) => (
@@ -207,6 +216,9 @@ function Preferences() {
             </motion.button>
           ))}
         </div>
+        {domainLimitMessage ? (
+          <p className="mt-2 text-xs text-amber-300">{domainLimitMessage}</p>
+        ) : null}
       </div>
 
       <div className="mb-7">

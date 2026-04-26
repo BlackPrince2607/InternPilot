@@ -83,8 +83,8 @@ def load_behavior_profile(supabase, user_id: str) -> BehaviorProfile:
 
 
 def compute_behavior_score(profile: BehaviorProfile, job_profile) -> float:
-    # EXPANDED
-    if not profile.domain_preferences and not profile.skill_preferences and not profile.title_preferences:
+    has_history = bool(profile.domain_preferences or profile.skill_preferences or profile.title_preferences)
+    if not has_history:
         return 0.55
 
     domain_pref = profile.domain_preferences.get(job_profile.domain, 0.0)

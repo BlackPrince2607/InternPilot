@@ -20,17 +20,22 @@ const TONES = [
   {
     id: 'professional',
     label: 'Professional',
-    desc: 'Formal, structured, company-researched',
+    desc: 'Formal, structured, company-researched style',
+  },
+  {
+    id: 'friendly',
+    label: 'Friendly',
+    desc: 'Warm and approachable while staying polished',
+  },
+  {
+    id: 'confident',
+    label: 'Confident',
+    desc: 'Assertive and impact-focused pitch',
   },
   {
     id: 'casual',
     label: 'Casual',
-    desc: 'Friendly, real, no corporate fluff',
-  },
-  {
-    id: 'concise',
-    label: 'Concise',
-    desc: 'Under 100 words, straight to the ask',
+    desc: 'Conversational, human, no buzzword fluff',
   },
 ]
 
@@ -40,6 +45,7 @@ function ColdEmail() {
   const [jobId, setJobId] = useState(null)
   const [emailData, setEmailData] = useState(null)
   const [selectedTone, setSelectedTone] = useState('professional')
+  const [isRegenerating, setIsRegenerating] = useState(false)
   const [autoFoundRecipient, setAutoFoundRecipient] = useState('')
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(true)
@@ -78,11 +84,15 @@ function ColdEmail() {
       setForm((prev) => ({
         ...prev,
         company_name: prefill.company_name || prev.company_name,
+        recipient_email: prefill.recipient_email || prev.recipient_email,
         job_title: prefill.job_title || prev.job_title,
         job_description: prefill.job_description || prev.job_description,
       }))
       if (prefill.job_id) {
         setJobId(prefill.job_id)
+      }
+      if (prefill.recipient_email) {
+        setAutoFoundRecipient(prefill.recipient_email)
       }
     }
   }, [location.state])
@@ -108,6 +118,8 @@ function ColdEmail() {
         job_description: form.job_description || undefined,
         user_note: form.user_note || undefined,
         tone: selectedTone,
+        company_domain: location.state?.prefill?.company_domain || undefined,
+        company_website: location.state?.prefill?.company_website || undefined,
       })
 
       const resolvedRecipient = res.data.recipient_email || ''
@@ -121,6 +133,7 @@ function ColdEmail() {
         subject: res.data.subject || res.data.email?.subject || '(No subject)',
         body: res.data.body || res.data.email?.body || '',
         mailto_url: res.data.mailto_url || res.data.email?.mailto_url || '',
+        tone: res.data.tone || selectedTone,
       })
 
       await loadHistory()
@@ -132,8 +145,32 @@ function ColdEmail() {
   }
 
   const handleRegenerate = async () => {
+    setIsRegenerating(true)
     setEmailData(null)
-    await handleGenerate()
+    try {
+      await handleGenerate()
+    } finally {
+      setIsRegenerating(false)
+    }
+  }
+
+  const handleLoadDraft = (email) => {
+    setForm((prev) => ({
+      ...prev,
+      company_name: email.company_name || prev.company_name,
+      recipient_email: email.recipient_email || prev.recipient_email,
+      user_note: prev.user_note,
+    }))
+    if (email.tone && TONES.some((tone) => tone.id === email.tone)) {
+      setSelectedTone(email.tone)
+    }
+    setEmailData({
+      email_id: email.id || email.email_id || null,
+      subject: email.subject || '(No subject)',
+      body: email.body || '',
+      mailto_url: '',
+      tone: email.tone || selectedTone,
+    })
   }
 
   const handleCopy = async () => {
@@ -191,24 +228,20 @@ function ColdEmail() {
 
             <div className="space-y-2">
               <p className="text-sm font-medium text-slate-200">Email Tone</p>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <select
+                value={selectedTone}
+                onChange={(event) => setSelectedTone(event.target.value)}
+                className={`${inputClass} bg-slate-900`}
+              >
                 {TONES.map((tone) => (
-                  <motion.button
-                    key={tone.id}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => setSelectedTone(tone.id)}
-                    className={`rounded-2xl border p-3 text-left transition ${
-                      selectedTone === tone.id
-                        ? 'border-blue-400/40 bg-blue-500/20 text-white'
-                        : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/8'
-                    }`}
-                  >
-                    <p className="text-sm font-semibold">{tone.label}</p>
-                    <p className="mt-1 text-xs text-slate-400">{tone.desc}</p>
-                  </motion.button>
+                  <option key={tone.id} value={tone.id}>
+                    {tone.label}
+                  </option>
                 ))}
-              </div>
+              </select>
+              <p className="text-xs text-slate-400">
+                {TONES.find((tone) => tone.id === selectedTone)?.desc}
+              </p>
             </div>
 
             <motion.button
@@ -287,10 +320,10 @@ function ColdEmail() {
                 whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.99 }}
                 onClick={handleRegenerate}
-                disabled={generating}
+                disabled={generating || isRegenerating}
                 className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-slate-300 transition hover:bg-white/10"
               >
-                Regenerate with same inputs
+                {isRegenerating ? 'Regenerating...' : 'Regenerate with same inputs'}
               </motion.button>
 
               {copied ? <InlineAlert tone="success" message="Copied to clipboard." /> : null}
@@ -332,6 +365,17 @@ function ColdEmail() {
                     <p className="text-sm font-semibold text-white">{email.company_name || 'Unknown company'}</p>
                     <p className="mt-1 text-sm text-slate-300">{email.subject || '(No subject)'}</p>
                     <p className="mt-1 text-xs text-slate-400">{email.recipient_email || 'No recipient'}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <span className="rounded-full border border-blue-400/30 bg-blue-500/15 px-2 py-0.5 text-[11px] text-blue-100">
+                        Tone: {email.tone || 'professional'}
+                      </span>
+                      <button
+                        onClick={() => handleLoadDraft(email)}
+                        className="rounded-full border border-white/20 bg-white/5 px-2 py-0.5 text-[11px] text-slate-200 transition hover:bg-white/10"
+                      >
+                        Load draft
+                      </button>
+                    </div>
                   </div>
                   <span
                     className={`rounded-full border px-3 py-1 text-xs ${

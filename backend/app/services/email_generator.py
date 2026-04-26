@@ -24,17 +24,20 @@ async def generate_cold_email(
     tone_instructions = {
         "professional": (
             "Tone: Formal and professional. "
-            "Use complete sentences. Show genuine research about the company."
+            "Use complete sentences and credible, specific language."
+        ),
+        "friendly": (
+            "Tone: Warm and approachable while staying professional. "
+            "Natural wording, no stiff corporate phrases."
+        ),
+        "confident": (
+            "Tone: Assertive and impact-focused. "
+            "Highlight outcomes and readiness without sounding arrogant."
         ),
         "casual": (
             "Tone: Friendly and conversational but still respectful. "
             "Sound like a real person, not a template. "
             "Avoid corporate buzzwords."
-        ),
-        "concise": (
-            "Tone: Ultra brief. Maximum 100 words total. "
-            "One sentence intro, one sentence about skills, "
-            "one sentence ask. No fluff whatsoever."
         ),
     }
     tone_instruction = tone_instructions.get(tone, tone_instructions["professional"])
@@ -52,11 +55,12 @@ Job description context: {(job_description or "")[:500]}
 Special note from candidate: {user_note or "None"}
 
 Rules:
-- Max 200 words (except concise tone: max 100 words)
+- Max 220 words
 - No "I hope this email finds you well"
 - No generic openers
 - Reference at least one specific skill or project
-- End with a clear, specific ask
+- Include a short "Why me" section with 2-3 bullet points tied to resume and role context
+- End with a short, specific CTA
 - Return JSON with keys: subject, body
 """
 

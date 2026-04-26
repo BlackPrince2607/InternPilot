@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.api.v1.auth import get_current_user
 from app.core.api_response import success_response
@@ -17,6 +17,21 @@ from app.services.user_activity import increment_emails_sent_count
 router = APIRouter(prefix="/cold-email", tags=["cold-email"])
 logger = get_logger()
 MAX_MAILTO_LENGTH = 2000
+ALLOWED_TONES = {"professional", "friendly", "confident", "casual"}
+_COLUMN_CACHE: dict[tuple[str, str], bool] = {}
+
+
+def _column_exists(supabase, table_name: str, column_name: str) -> bool:
+    key = (table_name, column_name)
+    if key in _COLUMN_CACHE:
+        return _COLUMN_CACHE[key]
+    try:
+        supabase.table(table_name).select(column_name).limit(1).execute()
+        _COLUMN_CACHE[key] = True
+    except Exception as exc:
+        message = str(exc).lower()
+        _COLUMN_CACHE[key] = not ("column" in message and "does not exist" in message)
+    return _COLUMN_CACHE[key]
 
 
 class GenerateEmailRequest(BaseModel):
@@ -27,6 +42,14 @@ class GenerateEmailRequest(BaseModel):
     job_description: str | None = None
     user_note: str | None = None
     tone: str = "professional"
+
+    @field_validator("tone", mode="before")
+    @classmethod
+    def validate_tone(cls, value: str) -> str:
+        tone = str(value or "professional").strip().lower()
+        if tone not in ALLOWED_TONES:
+            raise ValueError(f"tone must be one of {sorted(ALLOWED_TONES)}")
+        return tone
 
 
 class RecordSentRequest(BaseModel):
@@ -136,21 +159,32 @@ async def generate_email(
         logger.exception("Cold email generation failed for company=%s job_id=%s: %s", normalized_company_name, job_id, exc)
         raise HTTPException(502, "Failed to generate cold email") from exc
 
-    insert_res = (
-        supabase.table("cold_emails")
-        .insert(
-            {
-                "user_id": current_user["id"],
-                "job_id": job_id,
-                "company_id": company_id,
-                "recipient_email": payload.recipient_email,
-                "subject": email["subject"],
-                "body": email["body"],
-            }
-        )
-        .execute()
-    )
-    if not insert_res.data:
+    base_insert = {
+        "user_id": current_user["id"],
+        "job_id": job_id,
+        "company_id": company_id,
+        "recipient_email": payload.recipient_email,
+        "subject": email["subject"],
+        "body": email["body"],
+    }
+    insert_payloads: list[dict] = []
+
+    if _column_exists(supabase, "cold_emails", "tone"):
+        insert_payloads.append({**base_insert, "tone": payload.tone})
+    if _column_exists(supabase, "cold_emails", "metadata"):
+        insert_payloads.append({**base_insert, "metadata": {"tone": payload.tone}})
+    insert_payloads.append(base_insert)
+
+    insert_res = None
+    for insert_payload in insert_payloads:
+        try:
+            insert_res = supabase.table("cold_emails").insert(insert_payload).execute()
+            if insert_res.data:
+                break
+        except Exception:
+            continue
+
+    if not insert_res or not insert_res.data:
         raise HTTPException(500, "Failed to store generated email")
 
     email_id = insert_res.data[0]["id"]
@@ -162,6 +196,7 @@ async def generate_email(
             "body": safe_body,
             "mailto_url": mailto_url,
             "recipient_email": payload.recipient_email,
+            "tone": payload.tone,
         }
     )
 
