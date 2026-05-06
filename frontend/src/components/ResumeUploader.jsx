@@ -4,9 +4,6 @@ import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 import GooeyLoader from './ui/loader'
 
-const _motion = motion
-void _motion
-
 const PHASES = {
   IDLE: 'idle',
   UPLOADING: 'uploading',
@@ -371,7 +368,7 @@ function ResumeUploader() {
     setFile(selectedFile)
     setPhase(PHASES.IDLE)
     setError('')
-    setSuccessMessage('File selected. You’re ready to upload and parse.')
+    setSuccessMessage(`File selected. You're ready to upload and parse.`)
     setParsedData(null)
     setUploadProgress(0)
   }

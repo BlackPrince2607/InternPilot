@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import UTC, date, datetime
 
 from app.scraper.parser import JobRecord
 from app.scraper.utils import (
@@ -25,10 +26,37 @@ INTERNSHIP_KEYWORDS = [
 
 
 class AdzunaFetcher:
+    # These counters are process-local only. They reduce accidental repeated API
+    # calls in one running worker, but do not enforce a hard daily limit across
+    # restarts or multiple server processes.
+    _runs_today = 0
+    _last_reset_date: date | None = None
+
     def __init__(self) -> None:
         self.logger = get_logger()
         self.app_id = os.getenv("ADZUNA_APP_ID")
         self.app_key = os.getenv("ADZUNA_APP_KEY")
+        self.max_daily_runs = self._read_max_daily_runs()
+
+    def _read_max_daily_runs(self) -> int:
+        raw_limit = os.getenv("ADZUNA_MAX_DAILY_RUNS", "0")
+        try:
+            return max(0, int(raw_limit))
+        except ValueError:
+            self.logger.warning("Invalid ADZUNA_MAX_DAILY_RUNS=%r; daily run limit disabled", raw_limit)
+            return 0
+
+    def _daily_limit_reached(self) -> bool:
+        today = datetime.now(UTC).date()
+        if AdzunaFetcher._last_reset_date != today:
+            AdzunaFetcher._last_reset_date = today
+            AdzunaFetcher._runs_today = 0
+
+        if self.max_daily_runs and AdzunaFetcher._runs_today >= self.max_daily_runs:
+            return True
+
+        AdzunaFetcher._runs_today += 1
+        return False
 
     def _has_credentials(self) -> bool:
         return bool(self.app_id and self.app_key)
@@ -36,6 +64,9 @@ class AdzunaFetcher:
     async def fetch(self) -> list[JobRecord]:
         if not self._has_credentials():
             self.logger.warning("Skipping Adzuna: credentials not configured")
+            return []
+        if self._daily_limit_reached():
+            self.logger.warning("Skipping Adzuna: daily run limit reached (%s)", self.max_daily_runs)
             return []
 
         jobs: list[JobRecord] = []

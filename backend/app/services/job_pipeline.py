@@ -20,6 +20,8 @@ from app.services.job_cleaner import CleanedJob, clean_job_payload, is_low_infor
 from app.services.job_skill_extractor import extract_job_skill_profile
 from app.services.skill_normalizer import flatten_skills
 from app.services.scrapers.internshala_scraper import InternshalaJobScraper
+from app.services.scrapers.linkedin_scraper import LinkedInJobScraper
+from app.services.scrapers.wellfound_scraper import WellfoundJobScraper
 
 TECH_DOMAINS = {"backend", "frontend", "ml", "data", "devops", "mobile"}
 
@@ -40,6 +42,8 @@ class JobIngestionPipeline:
         self.deduplicator = JobDeduplicator()
         self.scrapers = [
             InternshalaJobScraper(max_pages=5),
+            LinkedInJobScraper(max_pages=2),
+            WellfoundJobScraper(max_pages=2),
             GreenhouseFetcher(),
             LeverFetcher(),
             RemotiveFetcher(),
@@ -172,6 +176,11 @@ class JobIngestionPipeline:
                 continue
 
             if not embedding:
+                self.logger.warning(
+                    "Rejecting job due to embedding_failed: title=%s company=%s",
+                    cleaned.title,
+                    cleaned.company,
+                )
                 rejection_counter["embedding_failed"] += 1
                 continue
 

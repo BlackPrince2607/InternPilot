@@ -21,16 +21,6 @@ class BehaviorProfile:
     title_preferences: dict[str, float]
 
 
-# EXPANDED
-def _get_warm_defaults(user_domain: str) -> BehaviorProfile:
-    domain_boost = {user_domain: 2.0} if user_domain != "general" else {}
-    return BehaviorProfile(
-        domain_preferences=domain_boost,
-        skill_preferences={},
-        title_preferences={},
-    )
-
-
 def load_behavior_profile(supabase, user_id: str) -> BehaviorProfile:
     try:
         result = (
