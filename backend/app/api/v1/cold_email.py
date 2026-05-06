@@ -130,7 +130,7 @@ async def generate_email(
         else:
             company_id = JobRepository(supabase=supabase).get_or_create_company(normalized_company_name)
 
-    if not payload.recipient_email and company_id:
+    if not payload.recipient_email and company_id and _column_exists(supabase, "companies", "contact_emails"):
         company_contact_res = (
             supabase.table("companies")
             .select("contact_emails")
@@ -235,7 +235,7 @@ async def get_history(current_user: dict = Depends(get_current_user)):
     supabase = get_supabase_client()
     result = (
         supabase.table("cold_emails")
-        .select("subject,body,recipient_email,sent_at,created_at,companies:company_id(name)")
+        .select("id,subject,body,recipient_email,sent_at,created_at,tone,job_id,companies:company_id(name)")
         .eq("user_id", current_user["id"])
         .order("created_at", desc=True)
         .execute()
@@ -245,12 +245,15 @@ async def get_history(current_user: dict = Depends(get_current_user)):
     for item in result.data or []:
         history.append(
             {
+                "id": item.get("id"),
                 "subject": item.get("subject"),
                 "body": item.get("body"),
                 "recipient_email": item.get("recipient_email"),
                 "company_name": (item.get("companies") or {}).get("name"),
                 "sent_at": item.get("sent_at"),
                 "created_at": item.get("created_at"),
+                "tone": item.get("tone") or "professional",
+                "job_id": item.get("job_id"),
             }
         )
     return success_response({"emails": history})

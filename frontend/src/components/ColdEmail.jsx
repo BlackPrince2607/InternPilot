@@ -161,11 +161,11 @@ function ColdEmail() {
       recipient_email: email.recipient_email || prev.recipient_email,
       user_note: prev.user_note,
     }))
-    if (email.tone && TONES.some((tone) => tone.id === email.tone)) {
+    if (email.tone && TONES.some((t) => t.id === email.tone)) {
       setSelectedTone(email.tone)
     }
     setEmailData({
-      email_id: email.id || email.email_id || null,
+      email_id: email.id || null,
       subject: email.subject || '(No subject)',
       body: email.body || '',
       mailto_url: '',
@@ -359,7 +359,7 @@ function ColdEmail() {
         {!historyLoading && hasHistory ? (
           <div className="mt-4 space-y-3">
             {history.map((email, idx) => (
-              <div key={`${email.id || email.email_id || idx}`} className="rounded-[24px] border border-white/10 bg-white/5 p-4">
+              <div key={email.id || `history-${idx}`} className="rounded-[24px] border border-white/10 bg-white/5 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-white">{email.company_name || 'Unknown company'}</p>

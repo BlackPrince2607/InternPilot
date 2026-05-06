@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from app.services.resume_parser import get_groq_client
+from app.services.groq_client import get_groq_client
 from app.scraper.utils import get_logger
 
 logger = get_logger()
@@ -73,6 +73,7 @@ Rules:
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
             response_format={"type": "json_object"},
+            timeout=30,
         )
         content = response.choices[0].message.content or "{}"
         logger.info("Cold email raw output preview: %s", content[:200])

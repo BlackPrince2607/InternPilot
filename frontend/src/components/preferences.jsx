@@ -101,21 +101,11 @@ function Preferences() {
     loadPreferences()
   }, [isAuthenticated])
 
-  const toggleItem = (item, list, setList, maxItems) => {
+  const toggleItem = (item, list, setList) => {
     if (list.includes(item)) {
       setList(list.filter((value) => value !== item))
-      if (maxItems) {
-        setDomainLimitMessage('')
-      }
-    } else if (!maxItems || list.length < maxItems) {
-      setList([...list, item])
-      if (maxItems) {
-        setDomainLimitMessage('')
-      }
     } else {
-      if (maxItems === 3) {
-        setDomainLimitMessage('You can select up to 3 domains')
-      }
+      setList([...list, item])
     }
   }
 
@@ -197,7 +187,7 @@ function Preferences() {
       <div className="mb-7">
         <h3 className="mb-3 text-sm font-medium text-slate-200">Target Domain</h3>
         <p className="mb-3 text-xs text-slate-500">
-          Pick up to 3
+          Pick up to 3. Leave empty to auto-detect from resume.
         </p>
         <div className="flex flex-wrap gap-2">
           {DOMAINS.map((domain) => (
@@ -205,7 +195,14 @@ function Preferences() {
               key={domain}
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => toggleItem(domain, selectedDomains, setSelectedDomains, 3)}
+              onClick={() => {
+                if (!selectedDomains.includes(domain) && selectedDomains.length >= 3) {
+                  setDomainLimitMessage('You can select up to 3 domains')
+                  return
+                }
+                setDomainLimitMessage('')
+                toggleItem(domain, selectedDomains, setSelectedDomains)
+              }}
               className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
                 selectedDomains.includes(domain)
                   ? 'border-violet-400/40 bg-violet-500 text-white shadow-lg shadow-violet-950/35'

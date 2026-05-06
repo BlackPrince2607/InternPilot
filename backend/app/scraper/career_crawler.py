@@ -8,7 +8,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from app.dependencies.supabase import get_supabase_client
-from app.scraper.utils import build_httpx_async_client, get_logger
+from app.scraper.utils import build_httpx_async_client, get_logger, infer_company_domain
 
 EMAIL_REGEX = r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:com|in|io|org|net|edu|co|ai|dev|tech|app)\b"
 FALSE_POSITIVE_MARKERS = {"example", "domain", "test", "noreply", "no-reply", "support", "info"}
@@ -48,7 +48,10 @@ class CareerCrawler:
         return result
 
     async def find_careers_url(self, company_name: str) -> str | None:
-        domain = f"{re.sub(r'\s+', '', (company_name or '').lower())}.com"
+        domain = infer_company_domain(company_name)
+        if not domain:
+            return None
+
         candidates = [
             f"https://{domain}/careers",
             f"https://{domain}/jobs",
@@ -64,6 +67,7 @@ class CareerCrawler:
                         return url
                 except Exception as exc:
                     self.logger.debug("Career URL probe failed for %s: %s", url, exc)
+                await asyncio.sleep(0.5)
         return None
 
     async def extract_emails_from_page(self, url: str, company_name: str | None = None) -> list[str]:

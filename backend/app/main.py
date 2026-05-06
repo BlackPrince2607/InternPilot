@@ -16,6 +16,21 @@ from app.services.schema_guard import validate_required_schema
 
 ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 load_dotenv(ENV_PATH)
+
+REQUIRED_ENV_VARS = [
+    "SUPABASE_URL",
+    "SUPABASE_KEY",
+    "GROQ_API_KEY",
+    "SUPABASE_RESUMES_BUCKET",
+]
+
+for var in REQUIRED_ENV_VARS:
+    if not os.getenv(var):
+        raise RuntimeError(
+            f"Required environment variable {var} is not set. "
+            f"Check your .env file before starting the server."
+        )
+
 logger = logging.getLogger(__name__)
 
 allowed_origins = [

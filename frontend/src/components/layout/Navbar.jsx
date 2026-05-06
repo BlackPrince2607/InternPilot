@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { label: 'Dashboard', to: '/app' },
   { label: 'Matches', to: '/matches' },
   { label: 'Cold Email', to: '/cold-email' },
+  { label: 'Images', to: '/images' },
   { label: 'Tracker', to: '/tracker' },
 ]
 

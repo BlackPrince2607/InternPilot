@@ -109,7 +109,6 @@ SKILL_TAXONOMY = {
         "aws": "AWS",
         "gcp": "GCP",
         "azure": "Azure",
-        "postman": "Postman",
         "linux": "Linux",
         "figma": "Figma",
         "jira": "Jira",
@@ -302,20 +301,42 @@ def normalize_company_name(name: str) -> str:
 
 def infer_company_domain(company_name: str) -> str | None:
     normalized = normalize_whitespace(company_name).lower()
+
+    suffixes_to_remove = [
+        "technologies",
+        "technology",
+        "solutions",
+        "services",
+        "software",
+        "systems",
+        "consulting",
+        "innovations",
+        "private limited",
+        "pvt ltd",
+        "pvt. ltd.",
+        "limited",
+        "inc",
+        "llc",
+        "ltd",
+        "corp",
+        "corporation",
+        "india",
+        "global",
+        "international",
+    ]
+    for suffix in suffixes_to_remove:
+        normalized = re.sub(rf"\b{re.escape(suffix)}\b", "", normalized).strip()
+
     normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-    if not normalized:
+    normalized = re.sub(r"\s+", "", normalized).strip()
+
+    if not normalized or len(normalized) < 2:
         return None
 
-    parts = [part for part in normalized.split(" ") if part]
-    if not parts:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", normalized):
         return None
 
-    candidate = "".join(parts)
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", candidate):
-        return None
-
-    return f"{candidate}.com"
+    return f"{normalized}.com"
 
 
 def normalize_for_hash(value: str | None) -> str:
@@ -366,14 +387,12 @@ def extract_skills(*sources: str | Iterable[str]) -> dict:
         key: sorted(set(values), key=str.lower)
         for key, values in categories.items()
     }
-    flat_skills = sorted({skill for values in categories.values() for skill in values}, key=str.lower)
 
     return {
         "raw": sorted(
             {normalize_whitespace(token) for token in raw_tokens if normalize_whitespace(token)},
             key=str.lower,
         ),
-        "normalized": flat_skills,
         "categories": categories,
     }
 

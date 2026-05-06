@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.api.v1.auth import get_current_user
 from app.core.api_response import success_response
@@ -55,6 +56,42 @@ _ADAPTIVE_MIN_STRICT_MATCHES = 12
 _COLUMN_EXISTS_CACHE: dict[tuple[str, str], bool] = {}
 _BULK_SCORE_RPC_AVAILABLE: bool | None = None
 _RESUME_EMBEDDING_WARNING_EMITTED = False
+_ADMIN_EMAIL_DOMAIN = (os.getenv("ADMIN_EMAIL_DOMAIN") or "").strip().lower()
+_MATCH_COOLDOWN_SECONDS = 30
+_MATCH_RATE_LIMIT_TTL_SECONDS = 300
+_MATCH_LAST_CALLED: dict[str, float] = {}
+
+if not _ADMIN_EMAIL_DOMAIN:
+    logger.warning("ADMIN_EMAIL_DOMAIN is not set; /matches/debug/stats is available to authenticated users")
+
+
+def _require_admin_email_domain(current_user: dict) -> None:
+    if not _ADMIN_EMAIL_DOMAIN:
+        return
+
+    email = str(current_user.get("email") or "").strip().lower()
+    if not email.endswith(_ADMIN_EMAIL_DOMAIN):
+        raise HTTPException(status_code=403, detail="Admin access required for match debug stats")
+
+
+def _enforce_matches_rate_limit(user_id: str) -> None:
+    now = time.time()
+    stale_before = now - _MATCH_RATE_LIMIT_TTL_SECONDS
+    for cached_user_id, last_called in list(_MATCH_LAST_CALLED.items()):
+        if last_called < stale_before:
+            _MATCH_LAST_CALLED.pop(cached_user_id, None)
+
+    last_called = _MATCH_LAST_CALLED.get(user_id)
+    if last_called is not None:
+        elapsed = now - last_called
+        if elapsed < _MATCH_COOLDOWN_SECONDS:
+            seconds_remaining = max(1, int(_MATCH_COOLDOWN_SECONDS - elapsed))
+            raise HTTPException(
+                status_code=429,
+                detail=f"Match generation is rate limited. Try again in {seconds_remaining} seconds.",
+            )
+
+    _MATCH_LAST_CALLED[user_id] = now
 
 
 def _column_exists(supabase, table_name: str, column_name: str) -> bool:
@@ -410,6 +447,7 @@ def _fetch_candidate_jobs(
 async def match_debug_stats(
     current_user: dict = Depends(get_current_user),
 ):
+    _require_admin_email_domain(current_user)
     supabase = get_supabase_client()
     notes: list[str] = []
 
@@ -537,6 +575,7 @@ async def get_matches(
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
+    _enforce_matches_rate_limit(current_user["id"])
     t0 = time.perf_counter()
     logger.info("GET /matches started")
     supabase = get_supabase_client()
