@@ -1,43 +1,97 @@
-# InternPilot
+<div align="center">
 
-InternPilot is a full-stack internship assistant that helps students:
+<img src="https://capsule-render.vercel.app/api?type=waving&color=6c63ff&height=200&section=header&text=InternPilot%20AI&fontSize=72&fontColor=ffffff&fontAlignY=38&desc=Upload%20resume.%20Discover%20matches.%20Send%20the%20perfect%20cold%20email.&descAlignY=60&descSize=16&animation=fadeIn" />
 
-- upload and parse resumes
-- discover ranked internship matches from live ingested jobs
-- generate tailored cold emails
-- track outreach activity
+<br/>
 
-This repository contains both frontend and backend code.
+[![Live Demo](https://img.shields.io/badge/🚀%20Live%20Demo-internpilot.vercel.app-6c63ff?style=for-the-badge&logoColor=white)](https://internpilot.vercel.app)
+[![Backend Status](https://img.shields.io/badge/Backend-Railway-0B0D0E?style=for-the-badge&logo=railway&logoColor=white)](https://railway.app)
+[![Frontend](https://img.shields.io/badge/Frontend-Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://vercel.com)
+[![Powered by Claude](https://img.shields.io/badge/AI-Claude%20API-cc785c?style=for-the-badge&logo=anthropic&logoColor=white)](https://anthropic.com)
 
-## Current Stack
+<br/>
 
-### Frontend
+> **InternPilot AI** is a full-stack SaaS platform that helps CSE students land internships faster.  
+> Upload your resume → get matched to live opportunities → generate a personalized cold email in one click.
 
-- React 19
-- Vite
-- React Router
-- Tailwind CSS v4
-- Framer Motion
-- Supabase JS client
-- Axios
+<br/>
 
-### Backend
+![Users](https://img.shields.io/badge/Users-100%2B-43e97b?style=flat-square)
+![Emails Generated](https://img.shields.io/badge/Emails%20Generated-500%2B-6c63ff?style=flat-square)
+![Tech Stack](https://img.shields.io/badge/Stack-FastAPI%20·%20Next.js%20·%20Supabase-ff6584?style=flat-square)
+![License](https://img.shields.io/badge/License-MIT-facc6d?style=flat-square)
 
-- FastAPI
-- Uvicorn
-- Supabase Python client
-- Pydantic v2
-- pdfplumber
-- Groq SDK
-- APScheduler
-- sentence-transformers
-- BeautifulSoup + httpx
+</div>
 
-### Infrastructure
+---
 
-- Supabase Auth
-- Supabase Postgres
-- Supabase Storage (resume files)
+## ✦ What is InternPilot AI?
+
+The internship hunt is broken. Students send generic applications to dozens of roles, hear nothing back, and burn weeks in the process.
+
+**InternPilot AI fixes that.**
+
+It parses your resume with AI, extracts your skills and experience, then continuously scrapes live internship listings and scores each one against your profile. When you find a match you love, it writes you a tailored cold email — in your tone, referencing your actual projects — ready to send in seconds.
+
+This isn't a job board. It's an **AI-powered internship co-pilot**.
+
+---
+
+## ✦ Feature Overview
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🧠 AI Resume Parser
+Upload your PDF resume. Claude API extracts your skills, tech stack, projects, and experience level — structured and ready for matching.
+
+### 🔍 Smart Job Matching
+A scoring engine compares your parsed profile against live job listings and returns a ranked match score (0–100%) for every role.
+
+### ✉️ One-Click Email Generator
+Select a job. Pick a tone — Professional, Casual, or Concise. Claude generates a personalized cold email referencing your real skills and projects.
+
+</td>
+<td width="50%" valign="top">
+
+### 📋 Kanban Application Tracker
+Track your entire pipeline in a 5-column drag-and-drop board: Shortlisted → Emailed → Replied → Interviewing → Closed.
+
+### 🕷️ Auto Job Scraper
+A background cron job scrapes internship listings daily and populates the database — keeping opportunities always fresh.
+
+### 🔐 Auth & Profiles
+Supabase-powered authentication. Every user gets a persistent profile, parsed resume data, and preference settings.
+
+</td>
+</tr>
+</table>
+
+---
+
+## ✦ Tech Stack
+
+<div align="center">
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **Frontend** | Next.js 14 · TypeScript · Tailwind CSS | React-based UI with SSR and app router |
+| **Backend** | FastAPI · Python 3.11 · Pydantic | REST API with async request handling |
+| **Database** | Supabase (PostgreSQL) | Auth + persistent storage + RLS policies |
+| **AI Layer** | Claude API (Anthropic) | Resume parsing · match scoring · email generation |
+| **Scraper** | BeautifulSoup4 · httpx | Daily internship data harvesting |
+| **Scheduler** | APScheduler | Cron-based background job runner |
+| **File Parsing** | PyMuPDF (fitz) | PDF resume extraction |
+| **Deploy — Backend** | Railway | Containerised FastAPI hosting + cron |
+| **Deploy — Frontend** | Vercel | Next.js edge deployment |
+| **Email (optional)** | Resend | User digest email delivery |
+| **State Management** | Zustand | Lightweight React global state |
+| **DnD** | @dnd-kit | Accessible drag-and-drop for Kanban |
+
+</div>
+
+---
 
 ## Repository Layout
 
