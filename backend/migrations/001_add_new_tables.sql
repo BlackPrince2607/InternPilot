@@ -95,6 +95,15 @@ CREATE TABLE IF NOT EXISTS user_interactions (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Generated image metadata for image generation feature
+CREATE TABLE IF NOT EXISTS generated_images (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    prompt TEXT NOT NULL,
+    image_url TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Index for fast job lookups
 CREATE INDEX IF NOT EXISTS idx_jobs_is_active ON jobs(is_active);
 CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score DESC);
@@ -145,6 +154,7 @@ ALTER TABLE resumes ADD COLUMN IF NOT EXISTS file_url TEXT;
 ALTER TABLE resumes ADD COLUMN IF NOT EXISTS extracted_data JSONB;
 ALTER TABLE resumes ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE resumes ADD COLUMN IF NOT EXISTS parsed_at TIMESTAMPTZ;
+ALTER TABLE resumes ADD COLUMN IF NOT EXISTS storage_path TEXT;
 
 ALTER TABLE preferences ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
 ALTER TABLE preferences ADD COLUMN IF NOT EXISTS preferred_roles TEXT[] DEFAULT '{}';
@@ -162,9 +172,15 @@ ALTER TABLE user_interactions ADD COLUMN IF NOT EXISTS job_id UUID REFERENCES jo
 ALTER TABLE user_interactions ADD COLUMN IF NOT EXISTS action TEXT;
 ALTER TABLE user_interactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
+ALTER TABLE generated_images ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE generated_images ADD COLUMN IF NOT EXISTS prompt TEXT;
+ALTER TABLE generated_images ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE generated_images ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_external_id_unique ON jobs(external_id);
 CREATE INDEX IF NOT EXISTS idx_resumes_user ON resumes(user_id);
 CREATE INDEX IF NOT EXISTS idx_preferences_updated_at ON preferences(updated_at);
+CREATE INDEX IF NOT EXISTS idx_generated_images_user_created ON generated_images(user_id, created_at DESC);
 
 CREATE OR REPLACE FUNCTION increment_jobs_applied(target_user_id UUID)
 RETURNS TABLE (jobs_applied_count INTEGER, emails_sent_count INTEGER)

@@ -38,6 +38,14 @@ function Home() {
               >
                 View Matches
               </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => navigate('/images')}
+                className="inline-flex items-center justify-center rounded-2xl border border-fuchsia-400/30 bg-fuchsia-400/10 px-5 py-3 text-sm font-semibold text-fuchsia-200 shadow-lg shadow-fuchsia-950/30 transition hover:border-fuchsia-300/40 hover:bg-fuchsia-400/15"
+              >
+                Open Image Generator
+              </motion.button>
             </div>
           </div>
 

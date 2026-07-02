@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass, field
@@ -7,6 +8,10 @@ from typing import Any
 
 from app.services.domain_detector import detect_domain
 from app.services.skill_normalizer import extract_terms_from_text, flatten_skills, normalize_skill
+
+_PROFILE_CACHE: dict[str, JobSkillProfile] = {}
+_PROFILE_CACHE_ORDER: list[str] = []
+_PROFILE_CACHE_MAX_SIZE = 5000
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -33,8 +38,34 @@ class JobSkillProfile:
     related_skill_groups_hit: int = 0
 
 
+def _job_cache_key(job: dict[str, Any], raw_data: dict[str, Any]) -> str:
+    job_id = str(job.get("id") or "")
+    title = str(job.get("title") or "")
+    description = str(job.get("description") or "")
+    skills_required = str(job.get("skills_required") or "")
+    raw_data_text = json.dumps(raw_data, sort_keys=True, separators=(",", ":")) if raw_data else ""
+    payload = "\u241f".join([job_id, title, description, skills_required, raw_data_text])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _cache_profile(key: str, profile: JobSkillProfile) -> None:
+    if key in _PROFILE_CACHE:
+        return
+
+    _PROFILE_CACHE[key] = profile
+    _PROFILE_CACHE_ORDER.append(key)
+    if len(_PROFILE_CACHE_ORDER) > _PROFILE_CACHE_MAX_SIZE:
+        oldest = _PROFILE_CACHE_ORDER.pop(0)
+        _PROFILE_CACHE.pop(oldest, None)
+
+
 def extract_job_skill_profile(job: dict[str, Any]) -> JobSkillProfile:
     raw_data = _as_dict(job.get("raw_data"))
+    cache_key = _job_cache_key(job, raw_data)
+    cached = _PROFILE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     title = str(job.get("title") or "")
     description = str(job.get("description") or "")
 
@@ -82,7 +113,7 @@ def extract_job_skill_profile(job: dict[str, Any]) -> JobSkillProfile:
         skills=list(weights.keys()),
     )
 
-    return JobSkillProfile(
+    profile = JobSkillProfile(
         title_skills=title_skills,
         required_skills=required_skills,
         description_skills=description_skills,
@@ -92,3 +123,5 @@ def extract_job_skill_profile(job: dict[str, Any]) -> JobSkillProfile:
         full_text=f"{title}\n{description}".strip(),
         related_skill_groups_hit=related_group_count,
     )
+    _cache_profile(cache_key, profile)
+    return profile

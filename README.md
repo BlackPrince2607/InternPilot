@@ -11,14 +11,13 @@
 
 <br/>
 
-> **InternPilot AI** is a full-stack SaaS that helps students land internships faster.
-> Upload your resume, get ranked against live internship listings using a personalized matching pipeline,
-> and generate a tailored cold email in one click.
+> **InternPilot AI** is a full-stack internship assistant for students.
+> Upload your resume, get ranked against live listings, generate tailored cold emails, and track outreach — all in one place.
 
 <br/>
 
-![Tech Stack](https://img.shields.io/badge/Stack-FastAPI%20%C2%B7%20React%20%C2%B7%20Vite%20%C2%B7%20Supabase%20%C2%B7%20pgvector-ff6584?style=flat-square)
-![License](https://img.shields.io/badge/License-MIT-facc6d?style=flat-square)
+![Tech Stack](https://img.shields.io/badge/Stack-FastAPI%20%C2%B7%20React%20%C2%B7%20Vite%20%C2%B7%20Supabase-ff6584?style=flat-square)
+![Repo](https://img.shields.io/badge/GitHub-BlackPrince2607%2FInternPilot-6c63ff?style=flat-square)
 
 </div>
 
@@ -30,7 +29,7 @@ The internship hunt is broken. Students send generic applications to dozens of r
 
 **InternPilot AI fixes that.**
 
-It parses your resume with an LLM, extracts your skills and experience, continuously ingests live internship listings from 9+ sources, and ranks each one against your profile using a pgvector ANN retrieval pipeline plus a behavioral ranker. When you find a match you love, it writes you a tailored cold email — in your tone, referencing your actual projects — ready to send in seconds.
+It parses your resume with Groq (Llama 3.3), extracts skills and experience, ingests live internship listings from multiple sources, and ranks each role against your profile using semantic retrieval plus rule-based scoring. When you find a match you love, it writes a tailored cold email — in your tone, referencing your actual projects — ready to send in seconds.
 
 This isn't a job board. It's an **AI-powered internship co-pilot**.
 
@@ -43,25 +42,25 @@ This isn't a job board. It's an **AI-powered internship co-pilot**.
 <td width="50%" valign="top">
 
 ### AI Resume Parser
-Upload your PDF resume. Groq (Llama 3.3 70B) extracts your skills, tech stack, projects, and experience level — structured and ready for matching.
+Upload a PDF resume. Groq extracts skills, tech stack, projects, and experience level into structured data ready for matching.
 
-### Personalized Match Ranking
-A multi-stage pipeline (pgvector ANN retrieval, MatchEngine scoring, MMR diversity, behavior re-rank) returns ranked internships with skill / project / experience / semantic-similarity breakdowns, missing-skill callouts, and a confidence tier.
+### Preference-Aware Matching
+Save role, location, domain, and stipend preferences. The engine retrieves active jobs and returns strict matches and near matches with score breakdowns.
 
-### One-Click Cold Email Generator
-Pick a job. Pick a tone — Professional, Casual, or Concise. Groq generates a personalized cold email referencing your real skills and projects.
+### One-Click Cold Email
+Pick a job and a tone — professional, friendly, confident, or casual. Groq generates a personalized email referencing your real skills and projects.
 
 </td>
 <td width="50%" valign="top">
 
-### Today Workspace
-A daily dashboard with priority actions, overdue follow-ups, activation score, and an in-app notification bell for new match alerts.
+### Application Tracker
+Record apply events and view aggregate stats — jobs applied and emails sent — to stay on top of your pipeline.
 
-### Application Tracker (Kanban)
-Track your entire pipeline through Shortlisted → Applied → Interviewing → Offered → Rejected with timeline events and CRM insights.
+### Live Job Ingestion
+APScheduler runs a multi-source scraping pipeline on a configurable interval. Jobs are cleaned, deduplicated, classified, and embedded for semantic retrieval.
 
-### Live Job Ingestion + Worker
-A separate worker process scrapes Internshala / LinkedIn / Wellfound and fetches Remotive / RemoteOK / YC / Greenhouse / Lever / Adzuna every 6 hours, dedupes them, and embeds them into pgvector for ANN retrieval.
+### Image Generation (experimental)
+Prompt-based image endpoint with a placeholder provider by default. Metadata is persisted when the `generated_images` table is present.
 
 </td>
 </tr>
@@ -75,19 +74,14 @@ A separate worker process scrapes Internshala / LinkedIn / Wellfound and fetches
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| **Frontend** | React 19 · Vite · Tailwind CSS 4 · TanStack Query | SPA with React Router 6 |
-| **Backend** | FastAPI · Python 3.13 · Pydantic | REST API + worker process |
-| **Database** | Supabase (Postgres + pgvector) | Auth, storage, RLS, ANN retrieval |
-| **AI Layer** | Groq (Llama 3.3 70B) + sentence-transformers (`all-MiniLM-L6-v2`) | Resume parsing · cold email · AI coach · semantic match |
-| **Ingestion** | httpx · BeautifulSoup · Playwright · APScheduler | 9+ sources, every 6h |
-| **Ranking** | pgvector ANN · MMR diversity · behavior + negative profile | Personalized match scoring |
-| **File Parsing** | pdfplumber | PDF resume extraction |
-| **Deploy — Backend** | Railway / Docker (`api` + `worker`) | Split process model |
-| **Deploy — Frontend** | Vercel | Static SPA (`vercel.json` rewrites) |
-| **Billing** | Stripe | B2C Pro subscription with webhook idempotency |
-| **Email** | Resend (optional) | Weekly digest, follow-up reminders, new-match alerts |
-| **Analytics** | PostHog (optional) | Product events + funnels |
-| **Error Tracking** | Sentry (optional) | Frontend + FastAPI integration |
+| **Frontend** | React 19 · Vite · Tailwind CSS 4 · React Router | SPA deployed on Vercel |
+| **Backend** | FastAPI · Python · Pydantic v2 | REST API with async handlers |
+| **Database** | Supabase (Postgres) | Auth, storage, RLS |
+| **AI Layer** | Groq (Llama 3.3) + sentence-transformers | Resume parsing · cold email · semantic match |
+| **Ingestion** | httpx · BeautifulSoup · Playwright · APScheduler | Multi-source job harvesting |
+| **File Parsing** | pdfplumber | PDF resume text extraction |
+| **Deploy — Backend** | Railway | Containerised FastAPI + in-process scheduler |
+| **Deploy — Frontend** | Vercel | Static SPA |
 
 </div>
 
@@ -96,33 +90,24 @@ A separate worker process scrapes Internshala / LinkedIn / Wellfound and fetches
 ## System Architecture
 
 ```text
-┌──────────────────────────────────────────────────────────────┐
-│                       INTERNPILOT AI                          │
-│                                                              │
-│  ┌──────────────┐        ┌──────────────────────────────┐    │
-│  │  React+Vite  │◄──────►│   FastAPI API (Railway)       │    │
-│  │  (Vercel)    │  REST  │   - 16 /api/v1/* routers      │    │
-│  └──────────────┘        │   - Rate limits + plan tiers  │    │
-│         │                └──────────┬────────────────────┘    │
-│         │                           │                          │
-│         │                  ┌────────┼────────────┐             │
-│         │                  ▼        ▼            ▼             │
-│         │            Supabase   Groq LLM    Stripe             │
-│         │            (DB+Auth+                                 │
-│         │             Storage+                                 │
-│         │             pgvector)                                │
-│         │                                                      │
-│         │            ┌──────────────────────────────────┐      │
-│         │            │  Worker (Railway / docker-compose)│      │
-│         │            │  - APScheduler ingestion (6h)     │      │
-│         │            │  - send_new_match_alerts          │      │
-│         │            │  - Weekly digest (Resend)         │      │
-│         │            │  - Follow-up reminders (Resend)   │      │
-│         │            └──────────────────────────────────┘      │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                      INTERNPILOT AI                          │
+│                                                             │
+│  ┌──────────────┐        ┌─────────────────────────────┐   │
+│  │  React+Vite  │◄──────►│   FastAPI API (Railway)      │   │
+│  │  (Vercel)    │  REST  │   - 9 /api/v1/* routers      │   │
+│  └──────────────┘        │   - APScheduler (6h default) │   │
+│         │                └──────────┬──────────────────┘   │
+│         │                           │                       │
+│         │                  ┌────────┼────────┐              │
+│         │                  ▼        ▼        ▼              │
+│         │              Supabase  Groq LLM  Embeddings        │
+│         │              (DB+Auth+          (sentence-         │
+│         │               Storage)          transformers)      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the live architecture reference.
+See [ARCHITECTURE.md](ARCHITECTURE.md) and [CONTEXT.md](CONTEXT.md) for the live implementation reference.
 
 ---
 
@@ -130,49 +115,27 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the live architecture reference.
 
 ```text
 InternPilot/
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx                  # Routes: onboarding, matches, cold-email, tracker, images
+│   │   ├── components/              # Matches, ColdEmail, Tracker, ResumeUploader, …
+│   │   ├── components/layout/       # AppLayout, Navbar
+│   │   ├── context/AuthContext.jsx
+│   │   ├── lib/{api.js,supabase.js}
+│   │   └── pages/                   # Onboarding, Preferences, Images
+│   └── package.json
 ├── backend/
 │   ├── app/
-│   │   ├── main.py                  # FastAPI API entry + CORS + Sentry + middleware
-│   │   ├── worker_main.py           # Worker entry (scheduler + digest loop)
-│   │   ├── scheduler.py             # APScheduler ingestion + post-ingest hooks
-│   │   ├── api/v1/                  # 16 route modules
-│   │   ├── core/api_response.py     # success_response / error_response wrappers
-│   │   ├── dependencies/supabase.py
-│   │   ├── middleware/rate_limit.py
-│   │   ├── scraper/                 # career_crawler, http_client, sources/
-│   │   └── services/
-│   │       ├── ranking/             # ranking_pipeline + diversity + negative_profile
-│   │       ├── workflow/            # today_service + prioritizer + reminders + alerts
-│   │       ├── scrapers/            # Internshala / LinkedIn / Wellfound
-│   │       ├── match_engine.py
-│   │       ├── vector_retrieval.py
-│   │       ├── job_pipeline.py
-│   │       └── ...
-│   ├── migrations/                  # 001 ... 018 SQL files
-│   ├── tests/
-│   ├── Dockerfile
-│   ├── Dockerfile.worker
-│   ├── requirements.txt
-│   └── .env.example
-└── frontend/
-    ├── src/
-    │   ├── App.jsx                  # Route map (Today / Internships / Outreach / Tracker / Insights / Settings / Billing / Admin)
-    │   ├── main.jsx                 # Providers: Auth, Toast, Paywall, QueryClient, Sentry, PostHog
-    │   ├── components/
-    │   │   ├── layout/DashboardLayout.jsx
-    │   │   ├── NotificationBell.jsx
-    │   │   └── ui/                  # Reusable primitives
-    │   ├── pages/
-    │   │   ├── dashboard/Dashboard.jsx
-    │   │   ├── dashboard/InternshipsPage.jsx
-    │   │   ├── dashboard/TrackerPage.jsx
-    │   │   └── onboarding/OnboardingFlow.jsx
-    │   ├── hooks/                   # useToday, useMatches, useNotifications
-    │   ├── lib/                     # api.js, supabase.js, analytics.js, routes.js
-    │   └── context/
-    ├── package.json
-    ├── vercel.json
-    └── .env.example
+│   │   ├── main.py                  # FastAPI entry + CORS + scheduler lifespan
+│   │   ├── scheduler.py             # APScheduler ingestion cycle
+│   │   ├── api/v1/                  # 9 route modules
+│   │   ├── services/                # match_engine, retrieval, resume_parser, …
+│   │   ├── scraper/                 # sources + career_crawler
+│   │   └── dependencies/
+│   ├── migrations/                  # 001, 002 SQL files
+│   └── requirements.txt
+├── ARCHITECTURE.md
+└── CONTEXT.md
 ```
 
 ---
@@ -181,9 +144,10 @@ InternPilot/
 
 ### Prerequisites
 
-- Python 3.13+
-- Node.js 20+
-- A Supabase project, a Groq API key
+- Python 3.11+
+- Node.js 18+
+- A Supabase project
+- A Groq API key
 
 ### 1. Clone
 
@@ -196,59 +160,86 @@ cd InternPilot
 
 ```bash
 cd backend
+python -m venv .venv
 
-python -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
+# macOS / Linux
+source .venv/bin/activate
+
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
 
 pip install -r requirements.txt
-
-cp .env.example .env              # fill in SUPABASE_URL, SUPABASE_KEY, GROQ_API_KEY at minimum
 ```
 
-Apply migrations in Supabase (SQL editor) in numeric order — see [LAUNCH.md](LAUNCH.md) for the full sequence.
+Create `backend/.env`:
 
-Run the API:
+```env
+SUPABASE_URL=...
+SUPABASE_KEY=...
+GROQ_API_KEY=...
+SUPABASE_RESUMES_BUCKET=resumes
+APP_CORS_ORIGINS=http://localhost:5173
+SCRAPER_INTERVAL_HOURS=6
+```
+
+Apply migrations in the Supabase SQL editor:
+
+- `backend/migrations/001_add_new_tables.sql`
+- `backend/migrations/002_group2_backend_fixes.sql`
+
+Start the API:
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8000
 ```
 
-Run the worker (separate terminal) when you want live ingestion:
-
-```bash
-ENABLE_SCHEDULER=1 PLAYWRIGHT_ENABLED=1 python -m app.worker_main
-```
+Health check: `GET http://localhost:8000/`
 
 ### 3. Frontend
 
 ```bash
 cd frontend
-
-cp .env.example .env              # fill in VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_API_BASE_URL
-
 npm install
+```
+
+Create `frontend/.env`:
+
+```env
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_ANON_KEY=...
+VITE_API_BASE_URL=http://localhost:8000/api/v1
+```
+
+```bash
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open [http://localhost:5173](http://localhost:5173).
 
 ---
 
 ## Environment Variables
 
-Full lists with comments live in [backend/.env.example](backend/.env.example) and [frontend/.env.example](frontend/.env.example).
-
-### Backend (required minimum)
+### Backend (required)
 
 | Variable | Description |
 |----------|-------------|
-| `SUPABASE_URL` | Your Supabase project URL |
-| `SUPABASE_KEY` | Supabase **service-role** key (backend only — never expose to the browser) |
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_KEY` | Supabase **service-role** key (backend only) |
 | `GROQ_API_KEY` | Groq API key |
+| `SUPABASE_RESUMES_BUCKET` | Storage bucket name for resumes (default: `resumes`) |
 
-### Backend (production)
+### Backend (optional)
 
-`APP_CORS_ORIGINS`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_PRO`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `REDIS_URL`, `SENTRY_DSN`, `ENABLE_SCHEDULER`, `PLAYWRIGHT_ENABLED`, `USE_PGVECTOR_RETRIEVAL`, `GREENHOUSE_BOARD_SLUGS`, `LEVER_BOARD_SLUGS`.
+| Variable | Description |
+|----------|-------------|
+| `APP_CORS_ORIGINS` | Comma-separated allowed origins |
+| `SCRAPER_INTERVAL_HOURS` | Ingestion interval (default: `6`) |
+| `SCRAPER_INITIAL_DELAY_MINUTES` | Delay before first scrape |
+| `ADMIN_EMAIL` | Admin user email for scrape triggers |
+| `IMAGE_GENERATION_ENABLED` | Enable image endpoint |
+| `IMAGE_PROVIDER` | Image provider (`placeholder` by default) |
+| `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` | Adzuna job source credentials |
 
 ### Frontend
 
@@ -256,115 +247,75 @@ Full lists with comments live in [backend/.env.example](backend/.env.example) an
 |----------|-------------|
 | `VITE_SUPABASE_URL` | Supabase project URL |
 | `VITE_SUPABASE_ANON_KEY` | Supabase anon/public key |
-| `VITE_API_BASE_URL` | Backend API base URL (e.g. `http://localhost:8000/api/v1`) |
-| `VITE_POSTHOG_KEY` | (optional) PostHog project key |
-| `VITE_POSTHOG_HOST` | (optional) PostHog host |
-| `VITE_SENTRY_DSN` | (optional) Sentry DSN |
+| `VITE_API_BASE_URL` | Backend API base URL |
 
 ---
 
 ## Key API Endpoints
 
-All endpoints live under `/api/v1`. A bearer token from Supabase Auth is required for protected routes.
+All routes live under `/api/v1`. Protected routes require a Supabase Auth bearer token.
 
 ```text
-GET  /api/v1/auth/me                              Current user profile
-POST /api/v1/resumes/upload                       Upload PDF resume
-POST /api/v1/resumes/parse/{resume_id}            Parse PDF with Groq
-GET  /api/v1/resumes/{resume_id}                  Fetch parsed resume
-POST /api/v1/preferences/save                     Save role / location preferences
-GET  /api/v1/preferences/me                       Get preferences
-GET  /api/v1/matches                              Ranked internship matches
-POST /api/v1/matches/feedback                     Up/down vote a match
-GET  /api/v1/today                                Today workspace payload
-GET  /api/v1/tracker/applications                 Application kanban
-POST /api/v1/tracker/record-interaction           View / skip / click_apply event
-GET  /api/v1/notifications                        Unread + recent notifications
-POST /api/v1/notifications/{id}/read              Mark notification as read
-POST /api/v1/cold-email/generate                  Tailored cold email
-GET  /api/v1/companies/discover                   Company discovery
-POST /api/v1/billing/checkout                     Stripe checkout session
-POST /api/v1/billing/portal                       Stripe customer portal
-POST /api/v1/billing/webhook                      Stripe webhook (idempotent)
-POST /api/v1/account/export                       Export all user data
-DELETE /api/v1/account                            Delete account
-GET  /health                                      Liveness
-GET  /ready                                       Readiness (1-row DB check)
+GET  /api/v1/auth/me                    Current user profile
+
+POST /api/v1/resumes/upload             Upload PDF resume
+POST /api/v1/resumes/parse/{resume_id}  Parse PDF with Groq
+GET  /api/v1/resumes/{resume_id}        Fetch parsed resume
+
+POST /api/v1/preferences/save           Save preferences
+GET  /api/v1/preferences/me             Get preferences
+
+GET  /api/v1/jobs/                      List active jobs
+GET  /api/v1/matches                    Ranked internship matches
+GET  /api/v1/matches/debug/stats        Match pipeline debug stats
+
+POST /api/v1/cold-email/generate        Generate tailored cold email
+POST /api/v1/cold-email/record-sent     Mark email as sent
+GET  /api/v1/cold-email/history         Email history
+
+POST /api/v1/tracker/record-apply       Record an application
+GET  /api/v1/tracker/stats              Aggregate tracker stats
+
+POST /api/v1/admin/trigger-scrape       Trigger manual scrape (admin)
+GET  /api/v1/admin/scraper-status       Scraper status (admin)
+
+POST /api/v1/images/generate            Prompt-based image generation
+
+GET  /                                    API liveness
 ```
 
 ---
 
 ## Deployment
 
-### Backend → Railway / Docker
+### Backend → Railway
 
-Two processes are deployed independently from the same repo:
+```bash
+# Procfile in backend/
+web: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
 
-| Service | Command | Image |
-|---------|---------|-------|
-| `api` | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` with `ENABLE_SCHEDULER=0` | `backend/Dockerfile` |
-| `worker` | `python -m app.worker_main` with `ENABLE_SCHEDULER=1 PLAYWRIGHT_ENABLED=1` | `backend/Dockerfile.worker` |
+Connect the repo to Railway, set the backend env vars, and deploy from the `backend/` directory.
 
-`docker-compose.yml` brings both up locally.
+> **Note:** The scheduler runs inside the API process lifespan. Run a single backend instance in production to avoid duplicate scrape jobs.
 
 ### Frontend → Vercel
 
-Connect the repo to Vercel, point at `frontend/`, add the `VITE_*` env vars, and deploy. `frontend/vercel.json` handles SPA rewrites.
-
-See [LAUNCH.md](LAUNCH.md) for the full pre-production checklist (migrations, RLS, Stripe webhook, smoke tests).
+Connect [BlackPrince2607/InternPilot](https://github.com/BlackPrince2607/InternPilot) to Vercel, set the root directory to `frontend/`, add the `VITE_*` env vars, and deploy.
 
 ---
 
-## Testing
+## Known Product Notes
 
-Backend tests use `pytest` and `fastapi.testclient.TestClient`:
-
-```bash
-cd backend
-pytest -q
-```
-
-Covered:
-
-- Match engine rules, retrieval, diversity, dedup, prioritizer (unit)
-- HTTP contracts for `/auth/me`, `/matches`, `/today`, `/billing/webhook` idempotency, `/health`, `/ready` (integration)
-
-Frontend lint + build:
-
-```bash
-cd frontend
-npm run lint
-npm run build
-```
-
-Run the backend and frontend checks locally before opening a PR.
-
----
-
-## Roadmap
-
-- [x] Resume PDF upload + Groq-powered parsing
-- [x] Live internship ingestion with 9+ sources, dedup, quality filters
-- [x] pgvector ANN retrieval + multi-stage personalized ranking pipeline
-- [x] Match feedback + behavioral re-ranking + negative profile
-- [x] Today workspace with priority actions, activation score, follow-up reminders
-- [x] CRM tracker (applications, timeline, CRM insights)
-- [x] In-app notification center + new-match alerts
-- [x] Stripe Pro subscription with webhook idempotency
-- [x] Personalized weekly digest (Resend)
-- [x] Worker / API process split with Docker
-- [x] FastAPI integration test suite + CI pipeline
-- [ ] Email open-rate tracking
-- [ ] Mobile-responsive UI polish across every page
-- [ ] Browser extension for one-click applications
-- [ ] Referral payouts + college-based cohorts
-- [ ] Multi-region scraper fleet
+- Tracker currently provides aggregate counts, not a full Kanban board.
+- Image generation defaults to placeholder output unless a provider is configured.
+- Scheduler runs inside the backend app lifespan — avoid running multiple API replicas with the scheduler enabled.
 
 ---
 
 ## Contributing
 
-Pull requests are welcome. For major changes, open an issue first to discuss.
+Pull requests are welcome. For major changes, open an issue first.
 
 ```bash
 git checkout -b feature/your-feature-name
@@ -372,19 +323,21 @@ git commit -m "feat: describe your change"
 git push origin feature/your-feature-name
 ```
 
-If your change touches architecture, update [ARCHITECTURE.md](ARCHITECTURE.md) in the same PR.
+Keep [README.md](README.md), [ARCHITECTURE.md](ARCHITECTURE.md), and [CONTEXT.md](CONTEXT.md) in sync with behavior changes.
 
 ---
 
 ## License
 
-MIT License — see [BlackPrince2607/InternPilot](https://github.com/BlackPrince2607/InternPilot) for usage terms.
+No license file is currently included in this repository.
 
 ---
 
 <div align="center">
 
 **Built with intention. Shipped with pride.**
+
+[![GitHub](https://img.shields.io/badge/GitHub-BlackPrince2607-6c63ff?style=social)](https://github.com/BlackPrince2607/InternPilot)
 
 <img src="https://capsule-render.vercel.app/api?type=waving&color=6c63ff&height=120&section=footer" />
 

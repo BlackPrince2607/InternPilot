@@ -16,7 +16,8 @@ export const AuthProvider = ({ children }) => {
 
     try {
       await api.get('/auth/me')
-    } catch {
+    } catch (e) {
+      console.warn('[InternPilot] Backend user sync failed:', e)
       // Keep frontend session alive; route-level API calls will show actionable errors.
     }
   }

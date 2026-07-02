@@ -1,18 +1,8 @@
 import pdfplumber
-from groq import Groq
 from io import BytesIO
-import os
 import json
 import httpx
-from functools import lru_cache
-
-# Module-level client — don't reinstantiate on every call
-@lru_cache
-def get_groq_client() -> Groq:
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY is not configured")
-    return Groq(api_key=api_key)
+from app.services.groq_client import get_groq_client
 
 
 async def download_pdf(url: str) -> bytes:
@@ -148,7 +138,8 @@ If any field is not found in the resume, use null for strings or empty array for
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            timeout=30,
         )
 
         content = response.choices[0].message.content

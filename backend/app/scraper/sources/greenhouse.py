@@ -5,7 +5,26 @@ import asyncio
 from bs4 import BeautifulSoup
 
 from app.scraper.parser import JobRecord
-from app.scraper.utils import build_httpx_async_client, extract_skills, generate_external_id, get_logger
+from app.scraper.utils import (
+    build_httpx_async_client,
+    extract_skills,
+    generate_external_id,
+    get_logger,
+    normalize_company_name,
+)
+
+INTERNSHIP_KEYWORDS = [
+    "intern",
+    "internship",
+    "trainee",
+    "apprentice",
+    "co-op",
+    "coop",
+    "fresher",
+    "graduate",
+    "entry level",
+    "junior",
+]
 
 
 class GreenhouseFetcher:
@@ -17,11 +36,54 @@ class GreenhouseFetcher:
             "razorpay",
             "browserstack",
             "freshworks",
-            "cred",
             "meesho",
             "groww",
             "zepto",
+            "cred",
             "slice",
+            "smallcase",
+            "jupiter",
+            "niyo",
+            "moneytap",
+            "dunzo",
+            "coinbase",
+            "stripe",
+            "notion",
+            "figma",
+            "linear",
+            "vercel",
+            "supabase",
+            "hashicorp",
+            "datadog",
+            "mongodb",
+            "elastic",
+            "confluent",
+            "cockroachlabs",
+            "planetscale",
+            "netlify",
+            "cloudflare",
+            "fastly",
+            "postman",
+            "gitlab",
+            "digitalocean",
+            "linode",
+            "segment",
+            "mixpanel",
+            "amplitude",
+            "brex",
+            "rippling",
+            "gusto",
+            "lattice",
+            "retool",
+            "airbyte",
+            "dbt-labs",
+            "prefect",
+            "weights-biases",
+            "scale-ai",
+            "hugging-face",
+            "cohere",
+            "anthropic",
+            "mistral",
         ]
         self.logger = get_logger()
 
@@ -32,19 +94,23 @@ class GreenhouseFetcher:
                 url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
                 try:
                     response = await client.get(url)
+                    if response.status_code == 404:
+                        self.logger.debug("No Greenhouse board for %s (404)", slug)
+                        await asyncio.sleep(0.5)
+                        continue
+                    response.raise_for_status()
                 except Exception as exc:
-                    self.logger.warning("Skipping Greenhouse company %s due to request error %s", slug, exc)
-                    await asyncio.sleep(0.5)
-                    continue
-                if response.status_code != 200:
-                    self.logger.warning("Skipping Greenhouse company %s due to status %s", slug, response.status_code)
+                    self.logger.warning("Skipping Greenhouse slug %s: %s", slug, exc)
                     await asyncio.sleep(0.5)
                     continue
 
                 payload = response.json()
-                company_name = slug.replace("-", " ").title()
+                company_name = normalize_company_name(slug.replace("-", " "))
                 for item in payload.get("jobs", []):
                     title = item.get("title") or "Untitled Internship"
+                    title_lower = title.lower()
+                    if not any(keyword in title_lower for keyword in INTERNSHIP_KEYWORDS):
+                        continue
                     apply_url = item.get("absolute_url") or ""
                     description_html = item.get("content") or ""
                     description = BeautifulSoup(description_html, "html.parser").get_text(" ", strip=True)
@@ -64,4 +130,6 @@ class GreenhouseFetcher:
                         )
                     )
                 await asyncio.sleep(0.5)
+
+            self.logger.info("Greenhouse returned %s internship jobs", len(jobs))
         return jobs

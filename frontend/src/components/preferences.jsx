@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import api from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 import { motion } from 'framer-motion'
+import { InlineAlert } from './ui/feedback'
 
 const ROLES = [
   'Backend Intern',
@@ -14,23 +15,58 @@ const ROLES = [
 ]
 
 const LOCATIONS = [
+  // Tier 1
   'Bangalore',
-  'Mumbai',
+  'Mumbai', 
   'Delhi NCR',
   'Pune',
   'Hyderabad',
   'Chennai',
+  // Tier 2
+  'Kolkata',
+  'Ahmedabad',
+  'Jaipur',
+  'Chandigarh',
+  'Kochi',
+  'Indore',
+  'Bhubaneswar',
+  'Coimbatore',
+  'Vizag',
+  'Noida',
+  // Special
   'Remote',
+  'Hybrid',
+  'Pan India',
+]
+
+const DOMAINS = [
+  'Backend',
+  'Frontend', 
+  'Full Stack',
+  'ML/AI',
+  'Data Science',
+  'DevOps',
+  'Mobile',
+]
+
+const STIPEND_OPTIONS = [
+  { label: 'Any', value: 0 },
+  { label: '₹5k+/mo', value: 5000 },
+  { label: '₹10k+/mo', value: 10000 },
+  { label: '₹20k+/mo', value: 20000 },
 ]
 
 function Preferences() {
   const [selectedRoles, setSelectedRoles] = useState([])
+  const [selectedDomains, setSelectedDomains] = useState([])
   const [selectedLocations, setSelectedLocations] = useState([])
+  const [stipendMin, setStipendMin] = useState(0)
   const [remoteOk, setRemoteOk] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [domainLimitMessage, setDomainLimitMessage] = useState('')
   const { isAuthenticated } = useAuth()
 
   useEffect(() => {
@@ -49,7 +85,9 @@ function Preferences() {
         }
 
         setSelectedRoles(prefs.preferred_roles || [])
+        setSelectedDomains(prefs.preferred_domains || [])
         setSelectedLocations(prefs.preferred_locations || [])
+        setStipendMin(prefs.stipend_min || 0)
         setRemoteOk(!!prefs.remote_ok)
       } catch (err) {
         if (err.response?.status !== 404) {
@@ -90,6 +128,8 @@ function Preferences() {
       await api.post('/preferences/save', {
         preferred_roles: selectedRoles,
         preferred_locations: selectedLocations,
+        preferred_domains: selectedDomains,
+        stipend_min: stipendMin,
         remote_ok: remoteOk,
       })
 
@@ -145,6 +185,40 @@ function Preferences() {
       </div>
 
       <div className="mb-7">
+        <h3 className="mb-3 text-sm font-medium text-slate-200">Target Domain</h3>
+        <p className="mb-3 text-xs text-slate-500">
+          Pick up to 3. Leave empty to auto-detect from resume.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {DOMAINS.map((domain) => (
+            <motion.button
+              key={domain}
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => {
+                if (!selectedDomains.includes(domain) && selectedDomains.length >= 3) {
+                  setDomainLimitMessage('You can select up to 3 domains')
+                  return
+                }
+                setDomainLimitMessage('')
+                toggleItem(domain, selectedDomains, setSelectedDomains)
+              }}
+              className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                selectedDomains.includes(domain)
+                  ? 'border-violet-400/40 bg-violet-500 text-white shadow-lg shadow-violet-950/35'
+                  : 'border-white/10 bg-slate-900/70 text-slate-300 hover:border-violet-300/30 hover:text-white'
+              }`}
+            >
+              {domain}
+            </motion.button>
+          ))}
+        </div>
+        {domainLimitMessage ? (
+          <p className="mt-2 text-xs text-amber-300">{domainLimitMessage}</p>
+        ) : null}
+      </div>
+
+      <div className="mb-7">
         <h3 className="mb-3 text-sm font-medium text-slate-200">Preferred Locations</h3>
         <div className="flex flex-wrap gap-2">
           {LOCATIONS.map((loc) => (
@@ -160,6 +234,27 @@ function Preferences() {
               }`}
             >
               {loc}
+            </motion.button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mb-7">
+        <h3 className="mb-3 text-sm font-medium text-slate-200">Minimum Stipend</h3>
+        <div className="flex flex-wrap gap-2">
+          {STIPEND_OPTIONS.map((option) => (
+            <motion.button
+              key={option.value}
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setStipendMin(option.value)}
+              className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                stipendMin === option.value
+                  ? 'border-emerald-400/40 bg-emerald-500 text-white shadow-lg shadow-emerald-950/35'
+                  : 'border-white/10 bg-slate-900/70 text-slate-300 hover:border-emerald-300/30 hover:text-white'
+              }`}
+            >
+              {option.label}
             </motion.button>
           ))}
         </div>
@@ -181,16 +276,8 @@ function Preferences() {
         Open to remote work
       </label>
 
-      {error && (
-        <div className="mb-4 rounded-2xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-          {error}
-        </div>
-      )}
-      {saved && !error && (
-        <div className="mb-4 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-          Preferences saved.
-        </div>
-      )}
+      {error ? <InlineAlert tone="error" message={error} className="mb-4" /> : null}
+      {saved && !error ? <InlineAlert tone="success" message="Preferences saved." className="mb-4" /> : null}
 
       <motion.button
         whileHover={saving ? undefined : { scale: 1.03 }}

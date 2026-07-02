@@ -9,6 +9,7 @@ from app.services.domain_detector import detect_domain, domain_similarity
 from app.services.job_skill_extractor import JobSkillProfile, extract_job_skill_profile
 from app.services.skill_normalizer import (
     categorize_skill,
+    enrich_resume_skills,
     expand_with_related,
     extract_terms_from_text,
     flatten_skills,
@@ -22,7 +23,9 @@ from app.utils.matching import location_matches, role_matches_title
 @dataclass(slots=True)
 class UserProfile:
     domain: str
+    preferred_domains: list[str]
     base_skills: set[str]
+    core_skills: set[str]
     project_skills: set[str]
     experience_skills: set[str]
     skill_depth: dict[str, float]
@@ -70,8 +73,30 @@ def _stringify_items(items: list[Any]) -> str:
     return "\n".join(parts)
 
 
+def _clean_skill_values(skills: list[str] | set[str]) -> set[str]:
+    cleaned: set[str] = set()
+    for skill in skills:
+        normalized = normalize_skill(skill)
+        if not normalized or normalized.isdigit() or len(normalized) <= 1:
+            continue
+        cleaned.add(normalized)
+    return cleaned
+
+
+def _ordered_clean_skills(skills: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in skills:
+        normalized = normalize_skill(raw)
+        if not normalized or normalized in seen or normalized.isdigit() or len(normalized) <= 1:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
+
+
 def _build_skill_depth(extracted_data: dict[str, Any]) -> tuple[set[str], set[str], dict[str, float]]:
-    base_skills = set(flatten_skills(extracted_data.get("skills")))
+    base_skills = _clean_skill_values(flatten_skills(extracted_data.get("skills")))
     project_counter: Counter[str] = Counter()
     experience_counter: Counter[str] = Counter()
 
@@ -86,7 +111,7 @@ def _build_skill_depth(extracted_data: dict[str, Any]) -> tuple[set[str], set[st
             ]
             if value
         )
-        for token in extract_terms_from_text(project_text):
+        for token in _clean_skill_values(extract_terms_from_text(project_text)):
             project_counter[token] += 1
 
     for experience in extracted_data.get("experience") or []:
@@ -99,7 +124,7 @@ def _build_skill_depth(extracted_data: dict[str, Any]) -> tuple[set[str], set[st
             ]
             if value
         )
-        for token in extract_terms_from_text(experience_text):
+        for token in _clean_skill_values(extract_terms_from_text(experience_text)):
             experience_counter[token] += 1
 
     depth: dict[str, float] = {}
@@ -117,10 +142,19 @@ def build_user_profile(extracted_data: dict[str, Any], preferences: dict[str, An
     preferences = preferences or {}
     preferred_roles = normalize_terms(preferences.get("preferred_roles"))
     preferred_locations = normalize_terms(preferences.get("preferred_locations"))
+    preferred_domains = [
+        str(domain).strip()
+        for domain in preferences.get("preferred_domains") or []
+        if str(domain or "").strip()
+    ][:3]
     remote_ok = bool(preferences.get("remote_ok"))
 
     project_skills, experience_skills, skill_depth = _build_skill_depth(extracted_data)
-    base_skills = set(flatten_skills(extracted_data.get("skills")))
+    ordered_resume_skills = _ordered_clean_skills(flatten_skills(extracted_data.get("skills")))
+    core_skills = set(ordered_resume_skills[:8])
+    base_skills = enrich_resume_skills(set(ordered_resume_skills))
+    project_skills = enrich_resume_skills(project_skills)
+    experience_skills = enrich_resume_skills(experience_skills)
     project_text = _stringify_items(extracted_data.get("projects") or [])
     experience_text = _stringify_items(extracted_data.get("experience") or [])
     resume_text = "\n".join(
@@ -137,10 +171,28 @@ def build_user_profile(extracted_data: dict[str, Any], preferences: dict[str, An
         resume_text,
         skills=list(base_skills | project_skills | experience_skills),
     )
+    if preferred_domains:
+        domain_map = {
+            "backend": "backend",
+            "frontend": "frontend",
+            "full stack": "backend",
+            "ml/ai": "ml",
+            "data science": "data",
+            "devops": "devops",
+            "mobile": "mobile",
+        }
+        mapped = [
+            domain_map.get(preferred_domain.lower(), "general")
+            for preferred_domain in preferred_domains
+        ]
+        if mapped and mapped[0] != "general":
+            domain = mapped[0]
 
     return UserProfile(
         domain=domain,
+        preferred_domains=preferred_domains,
         base_skills=base_skills,
+        core_skills=core_skills,
         project_skills=project_skills,
         experience_skills=experience_skills,
         skill_depth=skill_depth,
@@ -154,78 +206,106 @@ def build_user_profile(extracted_data: dict[str, Any], preferences: dict[str, An
 
 
 class MatchEngine:
-    min_skill_overlap = 0.3
-    min_semantic_similarity = 0.4
-    minimum_score = 0.6
+    # Soft thresholds: only truly unrelated jobs are hard-rejected.
+    min_skill_overlap = 0.08
+    min_semantic_similarity = 0.15
+    minimum_score = 0.35
 
     def __init__(self, user_profile: UserProfile, behavior_profile: BehaviorProfile | None = None) -> None:
         self.user = user_profile
         self.behavior = behavior_profile or BehaviorProfile({}, {}, {})
-        self.user_skill_space = self.user.base_skills | self.user.project_skills | self.user.experience_skills
+        self.user_skill_space = _clean_skill_values(
+            self.user.base_skills | self.user.project_skills | self.user.experience_skills
+        )
         self.expanded_user_skills = expand_with_related(self.user_skill_space)
+        self._skill_strength_cache: dict[str, float] = {}
 
     def evaluate_job(self, job: dict[str, Any], semantic_similarity_score: float) -> MatchResult:
         job_profile = extract_job_skill_profile(job)
         title = str(job.get("title") or "")
         location = str(job.get("location") or "")
+
+        # Domain is mostly a soft signal now.
         domain_score = domain_similarity(self.user.domain, job_profile.domain)
-        if domain_score <= 0.10:
+        if self.user.preferred_domains:
+            domain_map = {
+                "backend": "backend",
+                "frontend": "frontend",
+                "full stack": "backend",
+                "ml/ai": "ml",
+                "data science": "data",
+                "devops": "devops",
+                "mobile": "mobile",
+            }
+            for pref_domain in self.user.preferred_domains:
+                mapped = domain_map.get(pref_domain.lower(), "general")
+                alt_score = domain_similarity(mapped, job_profile.domain)
+                domain_score = max(domain_score, alt_score)
+        if domain_score == 0.0:
             return MatchResult(accepted=False, filter_reason="domain_mismatch", domain=job_profile.domain)
 
-        relevant_job_skills = set(job_profile.required_skills or job_profile.critical_skills or job_profile.weighted_keywords)
+        relevant_job_skills = _clean_skill_values(
+            set(job_profile.required_skills or job_profile.critical_skills or job_profile.weighted_keywords)
+        )
         if not relevant_job_skills:
-            relevant_job_skills = set(job_profile.weighted_keywords.keys())
-        if not relevant_job_skills:
-            return MatchResult(accepted=False, filter_reason="missing_job_skills", domain=job_profile.domain)
+            relevant_job_skills = _clean_skill_values(set(job_profile.weighted_keywords.keys()))
 
-        matched_skills = self._match_skills(relevant_job_skills)
-        skill_overlap = self._weighted_skill_match(job_profile, matched_skills)
-        if skill_overlap < self.min_skill_overlap:
+        skill_overlap, matched_skills = self._weighted_skill_match(job_profile, relevant_job_skills)
+        if skill_overlap < self.min_skill_overlap and len(relevant_job_skills) > 3:
             return MatchResult(accepted=False, filter_reason="low_skill_overlap", domain=job_profile.domain)
 
         if semantic_similarity_score < self.min_semantic_similarity:
             return MatchResult(accepted=False, filter_reason="low_semantic_similarity", domain=job_profile.domain)
 
         role_match_score = self._role_match_score(title)
-        if self.user.preferred_roles and role_match_score < 0.50:
-            return MatchResult(accepted=False, filter_reason="role_mismatch", domain=job_profile.domain)
-
         location_match_score = self._location_match_score(location)
-        if not self.user.remote_ok and self.user.preferred_locations and location_match_score <= 0.0:
-            return MatchResult(accepted=False, filter_reason="location_mismatch", domain=job_profile.domain)
+        preference_score = _clip01(0.65 * role_match_score + 0.35 * location_match_score)
 
         project_relevance = self._project_relevance(job_profile)
         experience_depth = self._experience_depth(job_profile)
         behavior_score = compute_behavior_score(self.behavior, job_profile)
 
         final_score = (
-            0.35 * skill_overlap
-            + 0.20 * project_relevance
-            + 0.15 * experience_depth
-            + 0.15 * semantic_similarity_score
-            + 0.10 * role_match_score
-            + 0.05 * location_match_score
+            0.40 * skill_overlap
+            + 0.25 * semantic_similarity_score
+            + 0.15 * preference_score
+            + 0.10 * project_relevance
+            + 0.10 * domain_score
         )
 
         penalties: list[str] = []
-        missing_critical = [skill for skill in job_profile.critical_skills if skill not in matched_skills]
         if domain_score < 0.45:
-            final_score *= 0.85
+            final_score *= 0.88
             penalties.append("Partial domain mismatch")
-        if skill_overlap < 0.30:
-            final_score *= 0.3
-            penalties.append("Low core skill overlap")
-        if len(missing_critical) > 3:
-            final_score *= 0.75
-            penalties.append("Missing multiple critical skills")
+        if skill_overlap < 0.20:
+            final_score *= 0.85
+            penalties.append("Low skill overlap")
+        if len(matched_skills) == 0:
+            final_score *= 0.70
+            penalties.append("No direct skill matches found")
         if behavior_score > 0.6:
             final_score *= 1.08
-            penalties.append("Behavior boost from prior interest")
-        elif behavior_score < 0.4:
-            final_score *= 0.92
-            penalties.append("Behavior penalty from prior skips")
+            penalties.append("Boosted by interaction history")
+        if role_match_score >= 1.0:
+            final_score *= 1.05
+        if location_match_score >= 1.0:
+            final_score *= 1.03
 
         final_score = _clip01(final_score)
+        missing_skills = _clean_skill_values(relevant_job_skills - matched_skills)
+        reasons = self._build_reasons(
+            matched_skills=matched_skills,
+            missing_skills=missing_skills,
+            role_match_score=role_match_score,
+            location_match_score=location_match_score,
+            preference_score=preference_score,
+            project_relevance=project_relevance,
+            experience_depth=experience_depth,
+            semantic_similarity_score=semantic_similarity_score,
+            skill_overlap=skill_overlap,
+            job_domain=job_profile.domain,
+        )
+
         if final_score < self.minimum_score:
             return MatchResult(
                 accepted=False,
@@ -238,7 +318,8 @@ class MatchEngine:
                 location_match_score=location_match_score,
                 behavior_score=behavior_score,
                 matched_skills=sorted(matched_skills),
-                missing_skills=sorted(relevant_job_skills - matched_skills),
+                missing_skills=sorted(missing_skills),
+                reasons=reasons,
                 penalties=penalties,
                 filter_reason="below_threshold",
                 domain=job_profile.domain,
@@ -246,16 +327,7 @@ class MatchEngine:
                 selection_probability=round(final_score, 4),
             )
 
-        reasons = self._build_reasons(
-            matched_skills=matched_skills,
-            role_match_score=role_match_score,
-            location_match_score=location_match_score,
-            project_relevance=project_relevance,
-            experience_depth=experience_depth,
-            semantic_similarity_score=semantic_similarity_score,
-            job_domain=job_profile.domain,
-        )
-        skill_gaps = self._build_skill_gaps(sorted(relevant_job_skills - matched_skills))
+        skill_gaps = self._build_skill_gaps(sorted(missing_skills))
 
         return MatchResult(
             accepted=True,
@@ -268,7 +340,7 @@ class MatchEngine:
             location_match_score=location_match_score,
             behavior_score=behavior_score,
             matched_skills=sorted(matched_skills),
-            missing_skills=sorted(relevant_job_skills - matched_skills),
+            missing_skills=sorted(missing_skills),
             skill_gaps=skill_gaps,
             reasons=reasons,
             penalties=penalties,
@@ -279,26 +351,111 @@ class MatchEngine:
 
     def _match_skills(self, job_skills: set[str]) -> set[str]:
         matched: set[str] = set()
-        for skill in job_skills:
-            related = get_related_skills(skill)
-            if related & self.expanded_user_skills:
+        normalized_job_skills = _clean_skill_values(job_skills)
+        for skill in normalized_job_skills:
+            strength = self._best_skill_match_strength(skill)
+            if strength >= 0.55:
                 matched.add(skill)
         return matched
 
-    def _weighted_skill_match(self, job_profile: JobSkillProfile, matched_skills: set[str]) -> float:
-        total_weight = sum(job_profile.weighted_keywords.values()) or len(job_profile.weighted_keywords) or 1
-        matched_weight = sum(
-            weight
-            for skill, weight in job_profile.weighted_keywords.items()
-            if skill in matched_skills
-        )
+    def _best_skill_match_strength(self, job_skill: str) -> float:
+        skill = normalize_skill(job_skill)
+        if not skill:
+            return 0.0
+
+        cached = self._skill_strength_cache.get(skill)
+        if cached is not None:
+            return cached
+
+        related = get_related_skills(skill)
+        if related & self.expanded_user_skills:
+            self._skill_strength_cache[skill] = 1.0
+            return 1.0
+
+        best = 0.0
+        for user_skill in self.user_skill_space:
+            if self._skills_partially_match(skill, user_skill):
+                best = max(best, 0.65)
+        self._skill_strength_cache[skill] = best
+        return best
+
+    @staticmethod
+    def _skills_partially_match(skill_a: str, skill_b: str) -> bool:
+        a = normalize_skill(skill_a)
+        b = normalize_skill(skill_b)
+        if not a or not b:
+            return False
+        if a == b:
+            return True
+        if len(a) >= 4 and len(b) >= 4 and (a in b or b in a):
+            return True
+
+        tokens_a = set(a.split())
+        tokens_b = set(b.split())
+        if not tokens_a or not tokens_b:
+            return False
+
+        overlap = len(tokens_a & tokens_b)
+        return overlap >= max(1, min(len(tokens_a), len(tokens_b)) // 2)
+
+    def _weighted_skill_match(self, job_profile: JobSkillProfile, job_skills: set[str]) -> tuple[float, set[str]]:
+        job_skills = _clean_skill_values(job_skills)
+        normalized_weights: dict[str, int] = {}
+        for raw_skill, raw_weight in job_profile.weighted_keywords.items():
+            skill = normalize_skill(raw_skill)
+            if not skill:
+                continue
+            normalized_weights[skill] = normalized_weights.get(skill, 0) + int(raw_weight)
+
+        if not normalized_weights:
+            weighted_match = 0.0
+            for skill in job_skills:
+                weighted_match += self._best_skill_match_strength(skill)
+            if len(self.user_skill_space) < 5:
+                weighted_match *= 1.15
+            overlap = _clip01(weighted_match / max(1, len(job_skills)))
+            return overlap, self._match_skills(job_skills)
+
+        total_weight = sum(normalized_weights.values()) or len(normalized_weights) or 1
+        matched_skills: set[str] = set()
+        matched_weight = 0.0
+        for skill, weight in normalized_weights.items():
+            strength = self._best_skill_match_strength(skill)
+            if strength <= 0.0:
+                continue
+            core_multiplier = 1.15 if skill in self.user.core_skills else 1.0
+            matched_weight += weight * strength * core_multiplier
+            if strength >= 0.55:
+                matched_skills.add(skill)
+
+        if len(self.user_skill_space) < 5:
+            total_weight *= 0.9
+
         cooccurrence_boost = min(0.12, 0.04 * job_profile.related_skill_groups_hit)
-        return _clip01((matched_weight / total_weight) + cooccurrence_boost)
+        overlap = _clip01((matched_weight / total_weight) + cooccurrence_boost)
+        return overlap, matched_skills
 
     def _role_match_score(self, title: str) -> float:
         if not self.user.preferred_roles:
             return 0.6
-        scores = [1.0 if role_matches_title(role, title) else 0.0 for role in self.user.preferred_roles]
+
+        title_tokens = set(normalize_terms(title))
+        scores: list[float] = []
+        for role in self.user.preferred_roles:
+            if role_matches_title(role, title):
+                scores.append(1.0)
+                continue
+
+            role_tokens = set(normalize_terms(role))
+            if not role_tokens or not title_tokens:
+                scores.append(0.0)
+                continue
+
+            overlap = len(role_tokens & title_tokens)
+            token_ratio = overlap / max(1, len(role_tokens))
+            # Partial lexical overlap should be weaker than explicit synonym matches.
+            scores.append(_clip01(0.7 * token_ratio))
+
         return max(scores, default=0.0)
 
     def _location_match_score(self, location: str) -> float:
@@ -335,16 +492,21 @@ class MatchEngine:
     def _build_reasons(
         self,
         matched_skills: set[str],
+        missing_skills: set[str],
         role_match_score: float,
         location_match_score: float,
+        preference_score: float,
         project_relevance: float,
         experience_depth: float,
         semantic_similarity_score: float,
+        skill_overlap: float,
         job_domain: str,
     ) -> list[str]:
         reasons: list[str] = []
         if matched_skills:
-            reasons.append(f"Strong match: {', '.join(sorted(matched_skills)[:4])}")
+            reasons.append(f"Matched skills: {', '.join(sorted(matched_skills)[:5])}")
+        if missing_skills:
+            reasons.append(f"Missing key skills: {', '.join(sorted(missing_skills)[:4])}")
         if project_relevance >= 0.45:
             reasons.append("Relevant project experience maps to the job stack")
         if experience_depth >= 0.35:
@@ -357,7 +519,13 @@ class MatchEngine:
             reasons.append("Location aligns with your preferences")
         if job_domain == self.user.domain and job_domain != "general":
             reasons.append(f"Aligned with your {job_domain} profile")
-        return reasons[:4] or ["High-signal match after strict relevance filtering"]
+        reasons.append(
+            "Score breakdown: "
+            f"skills {round(skill_overlap * 100, 1)}%, "
+            f"semantic {round(semantic_similarity_score * 100, 1)}%, "
+            f"preference {round(preference_score * 100, 1)}%"
+        )
+        return reasons[:5] or ["High-signal match after strict relevance filtering"]
 
     def _build_skill_gaps(self, missing_skills: list[str]) -> list[str]:
         gaps: list[str] = []

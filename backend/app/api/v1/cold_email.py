@@ -4,9 +4,10 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.api.v1.auth import get_current_user
+from app.core.api_response import success_response
 from app.dependencies.supabase import get_supabase_client
 from app.scraper.db import JobRepository
 from app.scraper.utils import get_logger, normalize_company_name
@@ -16,15 +17,39 @@ from app.services.user_activity import increment_emails_sent_count
 router = APIRouter(prefix="/cold-email", tags=["cold-email"])
 logger = get_logger()
 MAX_MAILTO_LENGTH = 2000
+ALLOWED_TONES = {"professional", "friendly", "confident", "casual"}
+_COLUMN_CACHE: dict[tuple[str, str], bool] = {}
+
+
+def _column_exists(supabase, table_name: str, column_name: str) -> bool:
+    key = (table_name, column_name)
+    if key in _COLUMN_CACHE:
+        return _COLUMN_CACHE[key]
+    try:
+        supabase.table(table_name).select(column_name).limit(1).execute()
+        _COLUMN_CACHE[key] = True
+    except Exception as exc:
+        message = str(exc).lower()
+        _COLUMN_CACHE[key] = not ("column" in message and "does not exist" in message)
+    return _COLUMN_CACHE[key]
 
 
 class GenerateEmailRequest(BaseModel):
     company_name: str
-    recipient_email: str
+    recipient_email: str = ""
     job_id: str | None = None
     job_title: str | None = None
     job_description: str | None = None
     user_note: str | None = None
+    tone: str = "professional"
+
+    @field_validator("tone", mode="before")
+    @classmethod
+    def validate_tone(cls, value: str) -> str:
+        tone = str(value or "professional").strip().lower()
+        if tone not in ALLOWED_TONES:
+            raise ValueError(f"tone must be one of {sorted(ALLOWED_TONES)}")
+        return tone
 
 
 class RecordSentRequest(BaseModel):
@@ -60,7 +85,7 @@ async def generate_email(
         supabase.table("resumes")
         .select("extracted_data")
         .eq("user_id", current_user["id"])
-        .order("uploaded_at", desc=True)
+        .order("id", desc=True)
         .limit(1)
         .execute()
     )
@@ -105,6 +130,19 @@ async def generate_email(
         else:
             company_id = JobRepository(supabase=supabase).get_or_create_company(normalized_company_name)
 
+    if not payload.recipient_email and company_id and _column_exists(supabase, "companies", "contact_emails"):
+        company_contact_res = (
+            supabase.table("companies")
+            .select("contact_emails")
+            .eq("id", company_id)
+            .limit(1)
+            .execute()
+        )
+        if company_contact_res.data:
+            emails = company_contact_res.data[0].get("contact_emails") or []
+            if emails:
+                payload.recipient_email = emails[0]
+
     try:
         email = await generate_cold_email(
             resume_data=resume_data,
@@ -113,6 +151,7 @@ async def generate_email(
             job_title=job_title,
             job_description=job_description,
             user_note=payload.user_note,
+            tone=payload.tone,
         )
     except ValueError as exc:
         raise HTTPException(502, str(exc)) from exc
@@ -120,31 +159,46 @@ async def generate_email(
         logger.exception("Cold email generation failed for company=%s job_id=%s: %s", normalized_company_name, job_id, exc)
         raise HTTPException(502, "Failed to generate cold email") from exc
 
-    insert_res = (
-        supabase.table("cold_emails")
-        .insert(
-            {
-                "user_id": current_user["id"],
-                "job_id": job_id,
-                "company_id": company_id,
-                "recipient_email": payload.recipient_email,
-                "subject": email["subject"],
-                "body": email["body"],
-            }
-        )
-        .execute()
-    )
-    if not insert_res.data:
+    base_insert = {
+        "user_id": current_user["id"],
+        "job_id": job_id,
+        "company_id": company_id,
+        "recipient_email": payload.recipient_email,
+        "subject": email["subject"],
+        "body": email["body"],
+    }
+    insert_payloads: list[dict] = []
+
+    if _column_exists(supabase, "cold_emails", "tone"):
+        insert_payloads.append({**base_insert, "tone": payload.tone})
+    if _column_exists(supabase, "cold_emails", "metadata"):
+        insert_payloads.append({**base_insert, "metadata": {"tone": payload.tone}})
+    insert_payloads.append(base_insert)
+
+    insert_res = None
+    for insert_payload in insert_payloads:
+        try:
+            insert_res = supabase.table("cold_emails").insert(insert_payload).execute()
+            if insert_res.data:
+                break
+        except Exception:
+            continue
+
+    if not insert_res or not insert_res.data:
         raise HTTPException(500, "Failed to store generated email")
 
     email_id = insert_res.data[0]["id"]
     mailto_url, safe_body = _build_safe_mailto_url(payload.recipient_email, email["subject"], email["body"])
-    return {
-        "email_id": email_id,
-        "subject": email["subject"],
-        "body": safe_body,
-        "mailto_url": mailto_url,
-    }
+    return success_response(
+        {
+            "email_id": email_id,
+            "subject": email["subject"],
+            "body": safe_body,
+            "mailto_url": mailto_url,
+            "recipient_email": payload.recipient_email,
+            "tone": payload.tone,
+        }
+    )
 
 
 @router.post("/record-sent")
@@ -173,7 +227,7 @@ async def record_sent(
     )
 
     increment_emails_sent_count(current_user["id"])
-    return {"success": True}
+    return success_response({"recorded": True})
 
 
 @router.get("/history")
@@ -181,7 +235,7 @@ async def get_history(current_user: dict = Depends(get_current_user)):
     supabase = get_supabase_client()
     result = (
         supabase.table("cold_emails")
-        .select("subject,body,recipient_email,sent_at,created_at,companies:company_id(name)")
+        .select("id,subject,body,recipient_email,sent_at,created_at,tone,job_id,companies:company_id(name)")
         .eq("user_id", current_user["id"])
         .order("created_at", desc=True)
         .execute()
@@ -191,12 +245,15 @@ async def get_history(current_user: dict = Depends(get_current_user)):
     for item in result.data or []:
         history.append(
             {
+                "id": item.get("id"),
                 "subject": item.get("subject"),
                 "body": item.get("body"),
                 "recipient_email": item.get("recipient_email"),
                 "company_name": (item.get("companies") or {}).get("name"),
                 "sent_at": item.get("sent_at"),
                 "created_at": item.get("created_at"),
+                "tone": item.get("tone") or "professional",
+                "job_id": item.get("job_id"),
             }
         )
-    return {"emails": history}
+    return success_response({"emails": history})
